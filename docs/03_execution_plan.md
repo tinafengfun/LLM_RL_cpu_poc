@@ -1,6 +1,7 @@
 # 执行计划：rl_sim PoC 落地步骤
 
-> 状态：v3（修订记录见文末 §8）。配套：`01_research_report.md`、`02_poc_design.md`（v3）。
+> 状态：v3.1（修订记录见文末 §8）。配套：`01_research_report.md`、`02_poc_design.md`（v3.1）。
+> v3.1 变更：任务集真实场景化（两大真实 RL 场景），M0/M1/M3 相应更新。
 > v3 变更：rollout 引擎改为本地 llama.cpp + Qwen3-4B（首选），M0 新增引擎构建与模型分发，M3 重写。
 
 ## 1. 目标环境（已摸底，2026-09-10）
@@ -35,7 +36,8 @@ taskset -c 0-3 python3 -c 'pass'              # E0 核绑定可用性
 # v3 新增：llama.cpp 构建与模型分发（节点无外网，全部 vendor）
 # 本地（有网机）：
 git clone --depth 1 https://github.com/ggml-org/llama.cpp && tar czf llama.cpp.tar.gz llama.cpp
-#   下载 Qwen3-4B-Instruct-2507 Q4_K_M + Q8 GGUF、Qwen3-1.7B Q4_K_M（HuggingFace/ModelScope）
+#   下载 Qwen3-4B-Instruct-2507 Q4_K_M + Q8 GGUF、Qwen3-1.7B Q4_K_M、
+#   Qwen2.5-VL-3B-Instruct Q4_K_M GGUF + mmproj（多模态引擎，v3.1 新增）（HuggingFace/ModelScope）
 scp llama.cpp.tar.gz *.gguf root@10.239.23.91:/mnt/nvme0/models/
 # 节点：
 cd /mnt/nvme0/models && tar xzf llama.cpp.tar.gz && cd llama.cpp
@@ -55,9 +57,9 @@ cmake -B build -DGGML_NATIVE=ON && cmake --build build --config Release -j 64   
 | 里程碑 | 内容 | 验收标准 | 预估 |
 |---|---|---|---|
 | **M0** | 节点环境 + **llama.cpp 编译 + GGUF 分发 + 引擎冒烟** + 预烘焙 venv + E0 基线（§2） | 验收项全过 | 3h |
-| **M1** | `types.py` / `data_source.py`（A/B/C 三档任务集 + 故障注入）/ `reward.py` | 三档任务按组出 Sample；reward 对构造正/错代码评分正确 | 3h |
+| **M1** | `types.py` / `data_source.py`（**两大真实场景任务集：L1 SWE-mini 仓库 / L2 terminal / L3 多跳问答 / V1-V2 多模态题 + 预渲染图片 vendor** + 故障注入 + mock 备选）/ `reward.py` | 各任务线按组出 Sample；reward 对构造正/错答案评分正确 | 4h |
 | **M2** | `sandbox.py`：unshare 禁网 + 降权 + 分档资源 profile + 指标收集（启动耗时/ru_*/RSS/IO） | 隔离用例全过：死循环→timeout、爆内存→oom、语法错→error、**socket 连接失败验证禁网** | 4h |
-| **M3** | `engine.py`（**LocalEngine：llama-server 多实例管理/心跳/绑核/slots** + APIEngine + MockEngine）+ `router.py`（session-affinity）+ `tokenizer.py` | 多实例拉起与心跳正常；logprob 真实返回；tool calling 多轮可驱动 C 档任务；router 转发与延迟可测 | 4h |
+| **M3** | `engine.py`（**LocalEngine：llama-server 多实例管理/心跳/绑核/slots，文本 Qwen3-4B + 多模态 Qwen2.5-VL-3B 双引擎** + APIEngine + MockEngine）+ `router.py`（session-affinity）+ `tokenizer.py` | 多实例拉起与心跳正常；logprob 真实返回；图像输入通路正常；tool calling 多轮可驱动 L1/L2 任务；router 转发与延迟可测 | 4h |
 | **M4** | `rollout_manager.py`（asyncio 有界队列 + 组屏障 + abort/requeue）+ `trainer.py`（**真实 logprob 输入的 TIS**）+ `weight_sync.py`（**真实 GGUF reload**） | 组 advantage/clip/TIS 数值对拍正确；>1k 并发到达下队列积压可见；abort 半成品回 buffer 可追；reload 耗时可测 | 4h |
 | **M5** | `train.py`（sync 基线）+ `train_async.py` + `monitor.py`（双列计时 + driver CPU% + IO + **引擎画像**）+ 实验 E1–E4、E6 | 设计 §7 DoD 全项通过 | 5h |
 | **M6** | README（对照表 + CPU 分工讲解 + 实验报告）+ 结果归档 push | 终审通过 | 3h |
@@ -122,6 +124,12 @@ python train.py --engine mock --num-rollout 2
 5. 确认后按 M0→M6 执行；如需调整（如砍掉 E5、换模型档位），在终审意见中说明。
 
 ## 8. 修订记录
+
+**v3.1（2026-09-15）**：任务集真实场景化（配套设计 v3.1）：
+
+1. M1 重写：任务集改两大真实场景（L1 SWE-mini 仓库 / L2 terminal / L3 多跳问答 / V1-V2 多模态题 + 预渲染图片 vendor + mock 备选），预估 3h→4h；
+2. M0 模型分发新增 Qwen2.5-VL-3B-Instruct GGUF + mmproj（多模态引擎）；
+3. M3 新增 VLM 引擎实例管理（与文本引擎并存）。
 
 **v3（2026-09-10）**：rollout 引擎本地化（用户决策）：
 

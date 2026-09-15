@@ -1,6 +1,7 @@
 # PoC 设计：CPU-only Agentic RL 后训练模拟（rl_sim）
 
-> 状态：v3（修订记录见文末 §10）。配套：`01_research_report.md`（调研依据）、`03_execution_plan.md`（执行计划）。
+> 状态：v3.1（修订记录见文末 §10）。配套：`01_research_report.md`（调研依据）、`03_execution_plan.md`（执行计划）。
+> v3.1 变更：任务集真实场景化——两大真实 RL 场景（长程 agentic RL + 多模态 RL），mock 降为备选。
 > v3 变更：rollout 引擎从"远程模型 API"改为 **本地 CPU 小模型推理（llama.cpp + Qwen3-4B）为首选**，远程 API 降为备选——logprob 由此从模拟值变为真实值。
 
 ## 1. 目标
@@ -19,17 +20,43 @@
 - 计时必须分列 **wall time vs CPU time**：推理/网络等待不计入 CPU 画像。
 - 实验产出是**扫参数曲线**，不是 reward 曲线。
 
-## 2. Task 选择：代码生成任务族（三档 workload）
+## 2. Task 选择：真实 RL 场景任务（两大场景 + mock 备选，v3.1）
 
-主线任务是代码生成 + 工具调用（reward 真实可算、agentic RL 最小完整形态），**三档混合负载**——只有混合负载才能看到 exec p50/p99、长尾拖住整组 rollout 这个 RL 特有现象：
+设计原则：sandbox 里跑的必须是**真实 RL 训练场景的任务形态**（多模态 RL、长程 agentic RL），运行时间与并发行为从任务本身自然涌现；合成 mock 仅作备选（连通性/纯压力对照），不作为实验结论数据来源。
 
-| 档 | workload | 资源特征 | 真实对照 |
+### 2.1 场景一：长程 agentic RL（主打）
+
+对应 GLM-5 Agentic RL / DSec 的真实负载：多轮交互、单轨迹秒到分钟级、天然长尾——**高并发同时启动 + 有运行时间**两个需求由此自然满足。
+
+| 任务线 | 内容 | 轮次/时长 | sandbox 负载特征 |
 |---|---|---|---|
-| **A：单步代码执行** | HumanEval 风格单函数实现 + 单测 | CPU 10–100ms，内存 MB 级 | 单步 verifier |
-| **B：SWE-mini** | 多文件小仓库改 bug + 跑 pytest 套件（依赖用预烘焙只读 venv） | CPU 秒–分钟级，大量文件 IO，内存 GB 级，长尾严重 | GLM-5 10K+ SWE 环境、DSec Container 档 |
-| **C：terminal/search 风格** | bash 多步 + 阻塞 IO + 超时（禁网环境下用本地 mock 服务/sleep 模拟多跳等待）；**模型经 tool calling 驱动多轮交互** | CPU 不高但**占 worker 槽位很久** | 数千 terminal 环境、多跳 search |
+| **L1 SWE-mini** | 内置 6–8 个多文件小仓库，模型多轮修 bug（读文件→改代码→跑 pytest→看报错→再改） | 3–10 轮，秒–分钟级 | pytest 执行 CPU 密集 + 文件 IO，GB 级内存，长尾严重 |
+| **L2 terminal 运维** | 本地日志/数据集上的多步 bash 管道（分析、统计、产出报告文件），结果精确校验 | 3–8 轮，秒级 | IO 密集 + 短 CPU 突发 |
+| **L3 多跳研究问答** | 本地语料库 + 本地 search 服务（禁网），模型多轮 search-read-answer，答案精确匹配 | 3–8 轮 | 阻塞等待为主、占槽时间长 |
 
-另加**故障注入用例**（死循环→timeout、爆内存→OOM、"装依赖"超时）专门压 sandbox 的异常路径。A 档保留少量题目仅作连通性验证。
+多轮轨迹在生命周期内**反复进出 sandbox**（L1 修 5 轮 = 5 次 pytest 执行），sandbox 到达率被多轮交互放大——比单次执行更接近真实 agentic RL 的 sandbox 压力。
+
+### 2.2 场景二：多模态 RL
+
+对应多模态 reasoning RL（MathVista 类可验证奖励）；引擎换 VLM。
+
+| 任务线 | 内容 | sandbox 负载特征 |
+|---|---|---|
+| **V1 图表/文档 QA** | 程序预渲染的图表 PNG（vendor 进仓库），问题有精确数值答案；模型可直接答或**写代码进 sandbox 分析图表数据** | 图像预处理 CPU 突发 + 生成代码执行 |
+| **V2 视觉几何/数学** | 离线程序合成几何题图片，答案可验证 | 同上 |
+
+引擎：**Qwen2.5-VL-3B-Instruct GGUF + mmproj**（llama.cpp mtmd，OpenAI 兼容图像输入），与文本引擎实例并存；图像 encode（ViT）本身是显著 CPU 负载，展示"图像预处理在 CPU、文本生成在引擎"的分工。
+
+### 2.3 mock 备选（联调/纯压力对照）
+
+合成负载原语（`cpu_burn/io_block/mem_hold/disk_io` 参数化时长）+ 模板代码生成，仅用于：无模型文件时的 CI 冒烟、sandbox 池纯压力基线对照。
+
+### 2.4 到达模式与观测
+
+- `burst:N`（t=0 齐发，测启动风暴：submit→exec_start 延迟分布、启动 CPU 尖峰、排空时间）/ `poisson:λ`（稳态压测）/ `group`（RL 真实到达：组屏障+abort，train 默认）；
+- 每任务三时间戳 → queue_wait / exec_wall / exec_cpu + `launch_overhead`（fork+exec+解释器启动，约 30–80ms/个，高并发齐发时为显著 CPU 尖峰）；输出**分场景、分档**的 p50/p99 与 1s 粒度利用率曲线。
+
+reward 全部 rule-based 可验证（pytest / 数值匹配 / 精确答案），不需要 reward model。故障注入用例（死循环→timeout、爆内存→OOM、"装依赖"超时）保留，专门压 sandbox 异常路径。
 
 ## 3. CPU 在 RL 里干什么（设计基石）
 
@@ -136,7 +163,7 @@ for rollout_id in range(num_rollout):
 
 **不选 vLLM CPU / SGLang CPU 的理由**：vLLM 语义最接近 SGLang（continuous batching、PagedAttention、`prompt_logprobs`、`n>1`），但 pip 依赖重、离线安装难、小模型发挥不出优势；llama.cpp 单文件部署 + CPU 性能最好。vLLM CPU 留作第二版可选对照。
 
-**模型备选**：Qwen3-1.7B / 0.6B（E1 高并发扫描压并发上限）；**另留 Q8 副本**：rollout 用 Q4、trainer 侧 scoring 用 Q8——量化差异本身就是真实的训推不一致源。
+**模型备选**：Qwen3-1.7B / 0.6B（E1 高并发扫描压并发上限）；**另留 Q8 副本**：rollout 用 Q4、trainer 侧 scoring 用 Q8——量化差异本身就是真实的训推不一致源。**多模态引擎**（v3.1）：Qwen2.5-VL-3B-Instruct GGUF + mmproj，支撑 V1/V2 任务线（§2.2），与文本引擎实例并存、统一经 router。
 
 **部署拓扑**（镜像 slime rollout 侧）：
 
@@ -224,6 +251,12 @@ E6（v3 新增）. **引擎画像**：llama-server 实例数 × slots 扫描（�
 - group size=1 + DIS + mock critic（SAO）；OPD 模拟（Q8 当教师，`advantage -= coef × (student_logp − teacher_logp)`，logprob 全真后可行）；多轮 agentic 任务加深（真实 SWE 仓）；容器级隔离对照（若环境允许，补 container/microVM 档启动成本实测）；vLLM CPU 引擎对照。
 
 ## 10. 修订记录
+
+**v3.1（2026-09-15）**：任务集真实场景化（用户决策）：
+
+1. §2 重写：任务从"代码生成三档 workload"改为**两大真实 RL 场景**——长程 agentic RL（L1 SWE-mini / L2 terminal / L3 多跳问答）+ 多模态 RL（V1 图表 QA / V2 视觉几何，引擎 Qwen2.5-VL-3B GGUF）；高并发与运行时间需求由任务形态自然满足（多轮轨迹反复进出 sandbox、单轨迹秒–分钟级天然长尾）；
+2. 合成负载原语（cpu_burn/io_block 等）从压测主力降为 **mock 备选**（CI 冒烟/纯压力基线），不作为实验结论数据来源（§2.3）；
+3. 到达模式与观测指标保留并并入 §2.4；故障注入用例保留。
 
 **v3（2026-09-10）**：rollout 引擎本地化（用户决策）：
 
