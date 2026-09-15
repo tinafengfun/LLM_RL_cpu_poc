@@ -1,8 +1,8 @@
 # LLM_RL_cpu_poc
 
-在无 GPU、只有模型 API 的 CPU 节点上，研究 RL 后训练（post-training）的**控制流**与 **CPU 负载画像**。
+在无 GPU 的 CPU 节点上，研究 RL 后训练（post-training）的**控制流**与 **CPU 负载画像**。
 
-以 **slime**（THUDM，GLM-5.2 同款后训练栈）为蓝本，对照 DeepSeek V4 / Miles：rollout 前向（GPU）替换为模型 API，training 反向（GPU）mock，其余全部 CPU 环节真实实现并可观测——重点是 **agentic RL sandbox 的驱动方式、workload 与资源特征**。
+以 **slime**（THUDM，GLM-5.2 同款后训练栈）为蓝本，对照 DeepSeek V4 / Miles：rollout 前向用 **llama.cpp + Qwen3-4B 本地 CPU 推理**（logprob / KV cache / tool calling 全真实，远程模型 API 为备选），training 反向（GPU）mock，其余全部 CPU 环节真实实现并可观测——重点是 **agentic RL sandbox 的驱动方式、workload 与资源特征**。
 
 设计原则：**闭环假可以接受，负载失真不能接受。**（假 reward 数值 + 真控制流 + 真实 CPU 负载测量）
 
