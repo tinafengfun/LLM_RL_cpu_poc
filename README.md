@@ -60,4 +60,5 @@ python -m unittest discover -s tests
 - llama.cpp 无 prompt_logprobs 端点 → trainer 侧 rescore 用**序列级（GSPO 风格）**重要性比率，非 per-token TIS；
 - Qwen3 默认 thinking 已禁用（`chat_template_kwargs.enable_thinking=false`）；
 - 权重同步只模拟时序与 reload 窗口，不声称 NCCL/RDMA 保真；
-- L1/L2 多轮 agentic 闭环在 T20 集成；V1/V2 需 VLM 引擎（Qwen2.5-VL-3B）。
+- L1/L2 多轮 agentic 闭环在 T20 集成；V1/V2 需 VLM 引擎（Qwen2.5-VL-3B）；
+- VLM 精度提示：3B 小模型对图表计数的准确率有限（实测数柱数答错属正常模型能力边界），PoC 验证的是数据通路而非 VLM 分数；提高图表对比度/间距或换 7B 可改善。
