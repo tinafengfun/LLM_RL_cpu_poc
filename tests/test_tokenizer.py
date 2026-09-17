@@ -15,7 +15,7 @@ class _StubTok(BaseHTTPRequestHandler):
         if self.path == "/tokenize":
             body = json.dumps({"tokens": list(range(len(payload["content"].split())))}).encode()
         else:  # /detokenize
-            body = json.dumps({"content": "w " * len(payload["tokens"])}).encode().strip()
+            body = json.dumps({"content": ("w " * len(payload["tokens"])).strip()}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
