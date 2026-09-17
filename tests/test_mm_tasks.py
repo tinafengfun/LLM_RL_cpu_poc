@@ -45,8 +45,8 @@ class TestVTasks(unittest.TestCase):
 
     def test_ground_truth_answers_consistent(self):
         by_id = {t.task_id: t for t in ALL_TASKS}
-        # bar values [3,7,5,9,2,6] -> tallest is 9
-        self.assertEqual(by_id["v1_bars_tallest_1"].answer, 9)
+        # bar values [3,7,5,9,2,6] -> 6 bars (question asks count, answerable from image)
+        self.assertEqual(by_id["v1_bars_tallest_1"].answer, 6)
         # shapes spec: 3 circles
         self.assertEqual(by_id["v2_shapes_count_1"].answer, 3)
 

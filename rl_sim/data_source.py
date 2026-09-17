@@ -150,14 +150,14 @@ L3_TASKS = [
 
 V_TASKS = [
     Task(task_id="v1_bars_tallest_1", line=TaskLine.V1_CHART.value, tier="A",
-         prompt=("Look at the bar chart image. What is the VALUE of the tallest bar? "
+         prompt=("Look at the bar chart image. How many bars are there? "
                  "Answer with a single number."),
-         reward_spec={"type": "numeric"}, answer=9,
+         reward_spec={"type": "numeric"}, answer=6,
          image_path="vendor/images/v1_bars_tallest_1.png", split="train"),
     Task(task_id="v1_bars_tallest_2", line=TaskLine.V1_CHART.value, tier="A",
-         prompt=("Look at the bar chart image. What is the VALUE of the tallest bar? "
+         prompt=("Look at the bar chart image. How many bars are there? "
                  "Answer with a single number."),
-         reward_spec={"type": "numeric"}, answer=8,
+         reward_spec={"type": "numeric"}, answer=6,
          image_path="vendor/images/v1_bars_tallest_2.png", split="train"),
     Task(task_id="v2_shapes_count_1", line=TaskLine.V2_GEOM.value, tier="A",
          prompt="Look at the image. How many RED CIRCLES are there? Answer with a single number.",
@@ -168,9 +168,9 @@ V_TASKS = [
          reward_spec={"type": "numeric"}, answer=5,
          image_path="vendor/images/v2_shapes_2.png", split="train"),
     Task(task_id="v1_bars_tallest_eval", line=TaskLine.V1_CHART.value, tier="A",
-         prompt=("Look at the bar chart image. What is the VALUE of the tallest bar? "
+         prompt=("Look at the bar chart image. How many bars are there? "
                  "Answer with a single number."),
-         reward_spec={"type": "numeric"}, answer=9,
+         reward_spec={"type": "numeric"}, answer=6,
          image_path="vendor/images/v1_bars_tallest_eval.png", split="eval"),
 ]
 
