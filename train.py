@@ -45,7 +45,9 @@ def build_engine(args, tasks_by_id):
         if not mgr.wait_healthy(600):
             raise RuntimeError("engines failed to come up")
         router = Router()
-        return LocalEngine(mgr.urls(), router=router)
+        eng = LocalEngine(mgr.urls(), router=router)
+        eng._manager = mgr  # caller owns lifecycle (stopped in main's finally)
+        return eng
     raise ValueError(args.engine)
 
 
@@ -74,13 +76,17 @@ def main(argv=None) -> dict:
     p.add_argument("--base-port", type=int, default=19300)
     p.add_argument("--cores-base", type=int, default=0)
     p.add_argument("--cores-per-engine", type=int, default=16)
+    p.add_argument("--task-lines", default="A",
+                   help="comma list: A,L1,L2,L3,V1,V2 (V* needs a VLM engine; L1/L2 land in T16+)")
     args = p.parse_args(argv)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    tasks_by_id = {t.task_id: t for t in ALL_TASKS}
-    engine = build_engine(args, tasks_by_id)
-    ds = RolloutDataSource(ALL_TASKS, n_samples_per_prompt=args.n_samples_per_prompt,
+    task_lines = set(args.task_lines.split(","))
+    tasks = [t for t in ALL_TASKS if t.line in task_lines]
+    tasks_by_id = {t.task_id: t for t in tasks}
+    engine = build_engine(args, {t.task_id: t for t in ALL_TASKS})
+    ds = RolloutDataSource(tasks, n_samples_per_prompt=args.n_samples_per_prompt,
                            seed=args.seed)
     pool = SandboxPool(workers=args.sandbox_workers)
     monitor = StageTimer()
@@ -91,7 +97,7 @@ def main(argv=None) -> dict:
                                   eps_clip_high=args.eps_clip_high, use_tis=args.use_tis,
                                   sim_tokens_per_s=args.sim_tokens_per_s)
     updater = WeightUpdater(engine, monitor=monitor, real_sleep_cap_s=0.2)
-    eval_tasks = [t for t in ALL_TASKS if t.split == "eval"]
+    eval_tasks = [t for t in tasks if t.split == "eval"]
 
     history = []
     t_start = time.perf_counter()
@@ -120,6 +126,9 @@ def main(argv=None) -> dict:
                             "mean_reward": data["mean_reward"], **ev})
     finally:
         pool.shutdown()
+        mgr = getattr(engine, "_manager", None)
+        if mgr is not None:
+            mgr.stop_all()
 
     summary = {"engine": args.engine, "num_rollout": args.num_rollout,
                "final_weight_version": trainer.weight_version,

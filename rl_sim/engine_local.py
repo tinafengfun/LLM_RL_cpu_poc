@@ -176,6 +176,9 @@ class LocalEngine(Engine):
             "max_tokens": self.max_tokens,
             "logprobs": True,
             "top_logprobs": 1,
+            # Qwen3 thinks by default and would burn the whole budget on
+            # reasoning_content; disable for RL rollout-style short answers.
+            "chat_template_kwargs": {"enable_thinking": False},
             "session_key": session_key,  # consumed by router for affinity
         }
         if self.router is not None:

@@ -132,6 +132,7 @@ class RolloutManager:
             "samples": samples,
             "num_groups": len(groups),
             "wall_s": wall_s,
+            "gen_errors": sum(1 for g in groups for s in g if s.status is SampleStatus.GEN_ERROR),
             "mean_reward": (sum(s.reward for s in samples) / len(samples)) if samples else 0.0,
             "stats": dict(self.stats),
         }
