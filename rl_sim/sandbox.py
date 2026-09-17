@@ -35,9 +35,10 @@ PROFILES: dict[str, dict] = {
 }
 
 _RUNNER = r'''
-import json, resource, time
+import json, os, resource, time
 _boot_ts = time.time()
-result = {"status": "error", "passed": 0, "total": __NTOTAL__, "detail": "", "boot_ts": _boot_ts}
+result = {"status": "error", "passed": 0, "total": __NTOTAL__, "detail": "",
+          "boot_ts": _boot_ts, "uid": os.getuid()}
 try:
     from solution import *
     tests = __TESTS__
@@ -71,15 +72,22 @@ print("__RESULT__" + json.dumps(result))
 '''
 
 
-def isolation_prefix() -> list[str]:
-    """Extra command prefix for isolation (T06: unshare -n / setpriv nobody). Empty for now."""
-    return []
+def isolation_prefix(isolated: bool = True) -> list[str]:
+    """Network namespace + uid drop (design v3.1 section 5.1).
+
+    `unshare -n` gives TRUE network isolation (~ms cost, unlike containers);
+    `setpriv` drops to nobody so model code never runs as root.
+    """
+    if not isolated:
+        return []
+    return ["unshare", "-n", "--",
+            "setpriv", "--reuid=nobody", "--regid=nogroup", "--clear-groups", "--"]
 
 
-def _build_cmd(profile: dict) -> list[str]:
+def _build_cmd(profile: dict, isolated: bool) -> list[str]:
     mem_bytes = profile["mem_mb"] * 1024 * 1024
     fsize_bytes = profile["fsize_mb"] * 1024 * 1024
-    return isolation_prefix() + [
+    return isolation_prefix(isolated) + [
         "prlimit",
         f"--as={mem_bytes}",
         f"--cpu={profile['cpu_s']}:{profile['cpu_s']}",
@@ -96,6 +104,7 @@ def run_sandbox_task(
     tier: str = "A",
     scratch_root: str | Path = "/tmp/rl_sim_scratch",
     overrides: dict | None = None,
+    isolated: bool = True,
 ) -> Sample:
     """Execute `code` + assert-style `tests` for one sample; fill status + metrics."""
     profile = dict(PROFILES[tier])
@@ -106,18 +115,22 @@ def run_sandbox_task(
     Path(scratch_root).mkdir(parents=True, exist_ok=True)
     tmpdir = Path(tempfile.mkdtemp(prefix="rlsb_", dir=scratch_root))
     try:
+        tmpdir.chmod(0o777)  # nobody (uid 65534) must enter the dir under isolation
         (tmpdir / "solution.py").write_text(code)
         runner = _RUNNER.replace("__NTOTAL__", str(len(tests))).replace("__TESTS__", repr(tests))
         (tmpdir / "runner.py").write_text(runner)
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmpdir),
+               "PYTHONDONTWRITEBYTECODE": "1", "PYTHONHASHSEED": "0"}
 
         spawn_ts = time.time()
         try:
             proc = subprocess.run(
-                _build_cmd(profile),
+                _build_cmd(profile, isolated),
                 cwd=tmpdir,
                 capture_output=True,
                 text=True,
                 timeout=profile["wall_s"],
+                env=env,
             )
             end_ts = time.time()
             _map_result(sample, proc)
@@ -156,7 +169,7 @@ def _map_result(sample: Sample, proc: subprocess.CompletedProcess) -> None:
         sample.sandbox["detail"] = f"rc={proc.returncode}: {tail}"
         return
     sample.sandbox.update(
-        {k: payload[k] for k in ("cpu_s", "maxrss_kb", "io_read_bytes", "io_write_bytes", "boot_ts", "detail") if k in payload}
+        {k: payload[k] for k in ("cpu_s", "maxrss_kb", "io_read_bytes", "io_write_bytes", "boot_ts", "detail", "uid") if k in payload}
     )
     sample.tests_passed = payload.get("passed", 0)
     sample.tests_total = payload.get("total", 0)
