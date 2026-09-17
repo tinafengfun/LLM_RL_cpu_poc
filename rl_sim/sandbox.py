@@ -72,6 +72,16 @@ print("__RESULT__" + json.dumps(result))
 '''
 
 
+def _nobody_ids() -> tuple[int, int]:
+    """nobody's uid/gid differ by distro (Debian 65534/nogroup, CentOS 99/99)."""
+    try:
+        import pwd
+        pw = pwd.getpwnam("nobody")
+        return pw.pw_uid, pw.pw_gid
+    except KeyError:
+        return 65534, 65534
+
+
 def isolation_prefix(isolated: bool = True) -> list[str]:
     """Network namespace + uid drop (design v3.1 section 5.1).
 
@@ -80,8 +90,9 @@ def isolation_prefix(isolated: bool = True) -> list[str]:
     """
     if not isolated:
         return []
+    uid, gid = _nobody_ids()
     return ["unshare", "-n", "--",
-            "setpriv", "--reuid=nobody", "--regid=nogroup", "--clear-groups", "--"]
+            "setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups", "--"]
 
 
 def _build_cmd(profile: dict, isolated: bool) -> list[str]:

@@ -4,6 +4,9 @@ import unittest
 
 from rl_sim.sandbox import run_sandbox_task
 from rl_sim.types import Sample, SampleStatus
+import pwd
+
+NOBODY_UID = pwd.getpwnam("nobody").pw_uid
 
 OK_CODE = "def add(a, b):\n    return a + b\n"
 OK_TESTS = ["assert add(1, 2) == 3"]
@@ -22,7 +25,7 @@ class TestIsolation(unittest.TestCase):
     def test_uid_dropped_to_nobody(self):
         s = run(OK_CODE, isolated=True)
         self.assertIs(s.status, SampleStatus.COMPLETED)
-        self.assertEqual(s.sandbox.get("uid"), 65534)
+        self.assertEqual(s.sandbox.get("uid"), NOBODY_UID)
 
     def test_network_blocked(self):
         s = run(NET_CODE, isolated=True)
