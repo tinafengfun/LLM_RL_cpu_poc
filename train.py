@@ -18,7 +18,7 @@ from pathlib import Path
 
 from rl_sim.data_source import ALL_TASKS, RolloutDataSource, task_by_id
 from rl_sim.engine import APIEngine, MockEngine
-from rl_sim.monitor import StageTimer, fmt_pct, fmt_stage_lines
+from rl_sim.monitor import StageTimer, rollout_report
 from rl_sim.rollout_manager import RolloutManager
 from rl_sim.sandbox import SandboxPool
 from rl_sim.trainer import MockMegatronTrainer
@@ -112,18 +112,10 @@ def main(argv=None) -> dict:
                 with monitor.stage("eval"):
                     ev = rm.eval(eval_tasks)
 
-            m = pool.metrics.snapshot()
-            line = (f"[rollout {rid}] samples {data['num_groups']}g/{len(data['samples'])}s "
-                    f"| mean_reward {data['mean_reward']:.3f} "
-                    f"| zero_var {data['stats']['zero_var_groups']} "
-                    f"| aborted {data['stats']['aborted']} "
-                    f"| tis_masked {metrics['tis_masked_frac']:.2%} "
-                    f"| wv {metrics['weight_version']}"
-                    + (f" | eval {ev['eval_pass_rate']:.3f}" if ev else ""))
-            print(line)
-            print("  " + fmt_stage_lines(monitor.snapshot()).replace("\n", "\n  "))
-            print(f"  [sandbox] busy_peak {m['peak_busy']}/{pool.workers} "
-                  f"| q_peak {m['peak_queue']} | exec {fmt_pct(m['exec_walls'])}")
+            eng_stats = engine.engine_stats() if hasattr(engine, "engine_stats") else None
+            print(rollout_report(rid, monitor.snapshot(), pool.metrics.snapshot(),
+                                 pool.workers, metrics, eng_stats, ev or None))
+            monitor.reset()
             history.append({"rollout_id": rid, **{k: v for k, v in metrics.items()},
                             "mean_reward": data["mean_reward"], **ev})
     finally:

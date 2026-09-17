@@ -130,16 +130,29 @@ class LocalEngine(Engine):
         self.timeout_s = timeout_s
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # client-side engine profile (server /metrics needs a flag; this is free)
+        self.req_count = 0
+        self.tok_generated = 0
+        self.req_lat_s: list[float] = []
+
+    def engine_stats(self) -> dict:
+        return {"requests": self.req_count, "tokens": self.tok_generated,
+                "lat": list(self.req_lat_s), "backends": len(self.backends)}
 
     def generate(self, sample: Sample, task: Task | None = None) -> Sample:
         self._pause.wait()
         session_key = sample.metadata.get("session_id") or f"g{sample.group_id}"
+        t0 = time.perf_counter()
         try:
             content, logprob_sum, ntok = self._chat(sample, session_key)
         except Exception as e:  # noqa: BLE001
             sample.status = SampleStatus.GEN_ERROR
             sample.metadata["error"] = f"{type(e).__name__}: {e}"
             return sample
+        finally:
+            self.req_count += 1
+            self.req_lat_s.append(time.perf_counter() - t0)
+        self.tok_generated += ntok
         sample.response = content
         sample.code = extract_code(content)
         sample.num_tokens = ntok

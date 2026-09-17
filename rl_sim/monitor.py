@@ -79,3 +79,33 @@ def fmt_pct(values: list[float], unit: str = "s") -> str:
     """'p50 0.08s p95 0.5s p99 0.9s' for a list of samples."""
     p = percentiles(values)
     return " ".join(f"p{k} {v:.2f}{unit}" for k, v in p.items())
+
+
+def rollout_report(rollout_id: int, stages: dict[str, tuple[float, float]],
+                   sandbox_metrics: dict, sandbox_workers: int,
+                   train_metrics: dict, engine_stats: dict | None = None,
+                   eval_metrics: dict | None = None) -> str:
+    """Full per-rollout report in design v3.1 section 5.6 format."""
+    lines = [
+        f"[rollout {rollout_id}]",
+        "  " + fmt_stage_lines(stages).replace("\n", "\n  "),
+    ]
+    if engine_stats:
+        lat = fmt_pct(engine_stats.get("lat", []))
+        lines.append(f"  [engine] backends {engine_stats.get('backends', 0)} "
+                     f"| reqs {engine_stats.get('requests', 0)} "
+                     f"| tokens {engine_stats.get('tokens', 0)} | lat {lat}")
+    m = sandbox_metrics
+    lines.append(f"  [sandbox] busy_peak {m.get('peak_busy', 0)}/{sandbox_workers} "
+                 f"| q_peak {m.get('peak_queue', 0)} "
+                 f"| exec {fmt_pct(m.get('exec_walls', []))} "
+                 f"| queue_wait {fmt_pct(m.get('queue_waits', []))}")
+    lines.append(f"  [train] wv {train_metrics.get('weight_version')} "
+                 f"| samples {train_metrics.get('num_samples')} "
+                 f"| loss {train_metrics.get('loss', 0.0):.4f} "
+                 f"| tis_masked {train_metrics.get('tis_masked_frac', 0.0):.2%} "
+                 f"| staleness_max {train_metrics.get('staleness_max', 0)}")
+    if eval_metrics:
+        lines.append(f"  [eval] pass_rate {eval_metrics.get('eval_pass_rate', 0.0):.3f} "
+                     f"(n={eval_metrics.get('eval_n', 0)})")
+    return "\n".join(lines)
