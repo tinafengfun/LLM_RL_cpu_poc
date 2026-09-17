@@ -25,6 +25,14 @@ from rl_sim.types import Sample, SampleStatus
 _SUPPORTED_LINES = {"A", "V1", "V2", "L3", "MOCK"}
 
 
+def reward_spec_of(task: Task) -> dict:
+    """Task.reward_spec carries only the type; merge the answer field in."""
+    spec = dict(task.reward_spec)
+    if task.answer is not None:
+        spec["answer"] = task.answer
+    return spec
+
+
 class RolloutManager:
     def __init__(self, data_source: RolloutDataSource, engine, sandbox_pool: SandboxPool,
                  monitor=None, gen_concurrency: int = 16, drop_zero_var: bool = True,
@@ -54,7 +62,7 @@ class RolloutManager:
                 self.sandbox.submit(sample, sample.code, task.tests, tier=task.tier))
         elif sample.status is SampleStatus.PENDING:
             sample.status = SampleStatus.COMPLETED  # direct-answer lines (L3/V*)
-        sample.reward = compute_reward(sample, task.reward_spec)
+        sample.reward = compute_reward(sample, reward_spec_of(task))
         return sample
 
     async def _process_group(self, group: list[Sample], sem: asyncio.Semaphore) -> list[Sample]:
@@ -153,7 +161,7 @@ class RolloutManager:
                     self.sandbox.run_batch([(s, s.code, t.tests, t.tier)])
                 elif s.status is SampleStatus.PENDING:
                     s.status = SampleStatus.COMPLETED
-                s.reward = compute_reward(s, t.reward_spec)
+                s.reward = compute_reward(s, reward_spec_of(t))
                 results.append(s.reward)
         return {"eval_pass_rate": sum(results) / len(results) if results else 0.0,
                 "eval_n": len(results)}
