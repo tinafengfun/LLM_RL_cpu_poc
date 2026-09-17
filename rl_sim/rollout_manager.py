@@ -116,10 +116,12 @@ class RolloutManager:
 
     def _pack(self, rollout_id: int, groups: list[list[Sample]], wall_s: float) -> dict:
         samples: list[Sample] = []
+        all_rewards: list[float] = []
         for group in groups:
             rewards = [s.reward for s in group]
             if not rewards:
                 continue
+            all_rewards.extend(rewards)
             mean_r = sum(rewards) / len(rewards)
             if self.drop_zero_var and len(set(rewards)) == 1:
                 self.stats["zero_var_groups"] += 1
@@ -133,7 +135,9 @@ class RolloutManager:
             "num_groups": len(groups),
             "wall_s": wall_s,
             "gen_errors": sum(1 for g in groups for s in g if s.status is SampleStatus.GEN_ERROR),
-            "mean_reward": (sum(s.reward for s in samples) / len(samples)) if samples else 0.0,
+            # pre-filter mean over ALL completed groups (post-filter sample count can be 0)
+            "mean_reward": (sum(all_rewards) / len(all_rewards)) if all_rewards else 0.0,
+            "kept_samples": len(samples),
             "stats": dict(self.stats),
         }
 

@@ -121,6 +121,9 @@ def main(argv=None) -> dict:
             eng_stats = engine.engine_stats() if hasattr(engine, "engine_stats") else None
             print(rollout_report(rid, monitor.snapshot(), pool.metrics.snapshot(),
                                  pool.workers, metrics, eng_stats, ev or None))
+            print(f"  [data] mean_reward {data['mean_reward']:.3f} "
+                  f"| kept {data['kept_samples']} | gen_errors {data['gen_errors']} "
+                  f"| zero_var {data['stats']['zero_var_groups']}")
             monitor.reset()
             history.append({"rollout_id": rid, **{k: v for k, v in metrics.items()},
                             "mean_reward": data["mean_reward"], **ev})
