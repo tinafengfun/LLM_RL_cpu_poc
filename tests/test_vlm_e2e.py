@@ -5,6 +5,7 @@ import unittest
 
 from rl_sim.data_source import task_by_id
 from rl_sim.reward import compute_reward
+from rl_sim.rollout_manager import reward_spec_of
 from rl_sim.types import Sample
 
 
@@ -31,7 +32,7 @@ class TestVlmE2E(unittest.TestCase):
             self.assertTrue(s.response.strip())
             self.assertLess(s.rollout_logprob, 0)
             self.assertGreater(s.num_tokens, 0)
-            r = compute_reward(s, task.reward_spec)
+            r = compute_reward(s, reward_spec_of(task))
             self.assertIn(r, (0.0, 1.0))
             print(f"\nVLM response: {s.response[:200]!r} reward={r} logp={s.rollout_logprob:.2f}")
         finally:
