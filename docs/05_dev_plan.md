@@ -112,5 +112,11 @@ LLM_RL_cpu_poc/
 
 ## 6. 当前进度
 
-- [x] T00（部分）：节点免密、磁盘选型、llama.cpp 构建链确认
-- [ ] T01 起：按序执行
+- [x] T00/M0：节点免密、磁盘选型、llama.cpp 节点编译、GGUF 模型分发（Qwen3-4B Q4/Q8 + Qwen2.5-VL-3B + mmproj）、llama-server 冒烟（logprob 真实返回）
+- [x] T01–T10（Phase A，G1 过）：types / monitor / reward / sandbox（核心+池化+隔离）/ data_source / 多模态 / engine / router
+- [x] T11–T15（Phase B）：engine_local（节点验收过）/ tokenizer / rollout_manager / trainer / weight_sync
+- [x] T16–T18（Phase C，G3 过）：train.py / train_async.py / 全字段报告；节点 local 闭环 mean_reward=1.000、eval 0.833
+- [x] T19：run_experiments.py（E0/E1/E4 实现，E3/E6 节点侧）
+- [x] T21：README 组件对照表
+- [x] T20：VLM 端到端（节点验收）
+- 全量单测 105+ 绿；过程中排掉三个真实 bug（Qwen3 thinking 耗尽 token / CentOS nobody gid / pkill -f 自杀）
