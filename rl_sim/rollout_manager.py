@@ -47,33 +47,56 @@ class RolloutManager:
         self.multi_turn_fn = multi_turn_fn
         self.partial_buffer: list[Sample] = []  # aborted partial rollouts
         self.stats = {"zero_var_groups": 0, "aborted": 0, "requeued": 0}
+        # live counters for observability/demo (read by sampler threads; GIL-safe)
+        self.live: dict = {"gen_waiting": 0, "scoring": 0, "done": 0,
+                           "total": 0, "groups_done": 0, "groups_total": 0,
+                           "group_progress": {}}
 
     # ------------------------------------------------------------------ async
     async def _generate_one(self, sample: Sample, task: Task, sem: asyncio.Semaphore) -> Sample:
-        async with sem:
-            await asyncio.to_thread(self.engine.generate, sample, task)
-        if sample.status is SampleStatus.GEN_ERROR:
-            sample.reward = 0.0
+        self.live["gen_waiting"] += 1
+        acquired = False
+        try:
+            async with sem:
+                acquired = True
+                self.live["gen_waiting"] -= 1
+                await asyncio.to_thread(self.engine.generate, sample, task)
+            if sample.status is SampleStatus.GEN_ERROR:
+                sample.reward = 0.0
+                return sample
+            if self.multi_turn_fn is not None:
+                await self.multi_turn_fn(sample, task, self.engine)
+            self.live["scoring"] += 1
+            if task.tests:
+                await asyncio.wrap_future(
+                    self.sandbox.submit(sample, sample.code, task.tests, tier=task.tier))
+            elif sample.status is SampleStatus.PENDING:
+                sample.status = SampleStatus.COMPLETED  # direct-answer lines (L3/V*)
+            sample.reward = compute_reward(sample, reward_spec_of(task))
             return sample
-        if self.multi_turn_fn is not None:
-            await self.multi_turn_fn(sample, task, self.engine)
-        if task.tests:
-            await asyncio.wrap_future(
-                self.sandbox.submit(sample, sample.code, task.tests, tier=task.tier))
-        elif sample.status is SampleStatus.PENDING:
-            sample.status = SampleStatus.COMPLETED  # direct-answer lines (L3/V*)
-        sample.reward = compute_reward(sample, reward_spec_of(task))
-        return sample
+        finally:
+            if not acquired:
+                self.live["gen_waiting"] -= 1
+            self.live["scoring"] = max(0, self.live["scoring"] - 1)
+            self.live["done"] += 1
+            gid = sample.group_id
+            if gid in self.live["group_progress"]:
+                self.live["group_progress"][gid][0] += 1
 
     async def _process_group(self, group: list[Sample], sem: asyncio.Semaphore) -> list[Sample]:
         # group barrier: gather waits for the slowest sample (the RL straggler)
         task = task_by_id(group[0].task_id)
-        return list(await asyncio.gather(*(self._generate_one(s, task, sem) for s in group)))
+        out = list(await asyncio.gather(*(self._generate_one(s, task, sem) for s in group)))
+        self.live["groups_done"] += 1
+        return out
 
     async def generate_async(self, rollout_id: int, batch_size: int) -> dict:
         t0 = time.perf_counter()
         groups = self._drain_buffer() + self.ds.get_groups(batch_size)
         groups = [g for g in groups if g and g[0].task_line in _SUPPORTED_LINES]
+        self.live.update(total=sum(len(g) for g in groups), done=0,
+                         groups_done=0, groups_total=len(groups),
+                         group_progress={g[0].group_id: [0, len(g)] for g in groups})
 
         sem = asyncio.Semaphore(self.gen_concurrency)
         group_tasks = [asyncio.ensure_future(self._process_group(g, sem)) for g in groups]

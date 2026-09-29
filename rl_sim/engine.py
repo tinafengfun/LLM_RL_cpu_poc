@@ -61,6 +61,8 @@ class Engine:
         self._weight_version = 0
         self._pause = threading.Event()
         self._pause.set()  # set = generating allowed
+        self.inflight = 0  # live counter: requests currently generating
+        self._inflight_lock = threading.Lock()
 
     @property
     def weight_version(self) -> int:
@@ -87,7 +89,7 @@ class MockEngine(Engine):
 
     def __init__(self, tasks_by_id: dict[str, Task], seed: int = 0,
                  base_correct: float = 0.15, slope: float = 0.08,
-                 latency_s: float = 0.0) -> None:
+                 latency_s: "float | tuple[float, float]" = 0.0) -> None:
         super().__init__()
         self._tasks = tasks_by_id
         self._rng = random.Random(seed)
@@ -100,26 +102,34 @@ class MockEngine(Engine):
 
     def generate(self, sample: Sample, task: Task | None = None) -> Sample:
         self._pause.wait()  # weight-sync window: generation blocks while paused
-        task = task or self._tasks[sample.task_id]
-        if self.latency_s:
-            time.sleep(self.latency_s)
-        if not task.solution:
-            sample.status = SampleStatus.GEN_ERROR
-            sample.metadata["error"] = "no solution template for mock engine"
+        with self._inflight_lock:
+            self.inflight += 1
+        try:
+            task = task or self._tasks[sample.task_id]
+            if self.latency_s:
+                lat = (self._rng.uniform(*self.latency_s)
+                       if isinstance(self.latency_s, tuple) else self.latency_s)
+                time.sleep(lat)
+            if not task.solution:
+                sample.status = SampleStatus.GEN_ERROR
+                sample.metadata["error"] = "no solution template for mock engine"
+                return sample
+            if self._rng.random() < self.correct_prob(self._weight_version):
+                code = task.solution
+            else:
+                code = mutate(task.solution, self._rng)
+            sample.response = f"```python\n{code}```"
+            sample.code = code
+            sample.num_tokens = len(sample.response.split())
+            # fake per-token logprobs: mean -0.5 with noise (see class docstring)
+            sample.rollout_logprob = sum(self._rng.gauss(-0.5, 0.15) for _ in range(sample.num_tokens))
+            sample.weight_version = self._weight_version
+            sample.turns = 1
+            sample.status = SampleStatus.PENDING  # sandbox will finalize
             return sample
-        if self._rng.random() < self.correct_prob(self._weight_version):
-            code = task.solution
-        else:
-            code = mutate(task.solution, self._rng)
-        sample.response = f"```python\n{code}```"
-        sample.code = code
-        sample.num_tokens = len(sample.response.split())
-        # fake per-token logprobs: mean -0.5 with noise (see class docstring)
-        sample.rollout_logprob = sum(self._rng.gauss(-0.5, 0.15) for _ in range(sample.num_tokens))
-        sample.weight_version = self._weight_version
-        sample.turns = 1
-        sample.status = SampleStatus.PENDING  # sandbox will finalize
-        return sample
+        finally:
+            with self._inflight_lock:
+                self.inflight -= 1
 
 
 class APIEngine(Engine):
