@@ -164,14 +164,16 @@ def step_verify(root: str, repo: str, venv_tag: str = "py311") -> None:
         env = dict(os.environ, PYTHONPATH=worktree)
         subprocess.run([py, "-c", "import sympy; print('sympy', sympy.__version__)"],
                        check=True, env=env, cwd=worktree)
-        f2p = json.loads(inst["FAIL_TO_PASS"])
-        node = f2p[0].split("::")[0]
+        from rl_sim.swebench import resolve_test_nodes
+        nodes = resolve_test_nodes(inst)
+        node = nodes[0] if nodes else ""
         r = subprocess.run([py, "-m", "pytest", node, "--collect-only", "-q"],
                            env=env, cwd=worktree, capture_output=True, text=True)
         if r.returncode not in (0, 5):  # 5 = no tests collected
             print(r.stdout[-2000:]); print(r.stderr[-2000:])
             raise SystemExit(f"[verify] pytest collect failed rc={r.returncode}")
-        print(f"[verify] OK: sympy imports at {commit[:8]}, collect rc={r.returncode}")
+        print(f"[verify] OK: sympy imports at {commit[:8]}, "
+              f"collect {node} rc={r.returncode}")
 
 
 def main() -> None:

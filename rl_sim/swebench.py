@@ -13,6 +13,7 @@ kept for sanity checks only and is never shown to the model.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 
 from rl_sim.data_source import Task
@@ -111,3 +112,41 @@ def load_tasks(path: str, repo: str | None = None, limit: int | None = None,
                split: str = "train") -> list[Task]:
     return [to_task(i, tier=tier, max_turns=max_turns, split=split)
             for i in load_instances(path, repo=repo, limit=limit)]
+
+
+# ---------------------------------------------------------------------------
+# test-node resolution (shared by bake verify on node2 and grader/T28)
+# ---------------------------------------------------------------------------
+
+def resolve_test_nodes(swe: dict) -> list[str]:
+    """Map FAIL_TO_PASS/PASS_TO_PASS entries to pytest node ids.
+
+    Entries come in three shapes: full node ids (path::name), file paths,
+    or bare test-function names (old sympy rows). Bare names are anchored to
+    the test file that the official test_patch adds them to; tests not added
+    by the patch fall back to the first touched test file.
+    """
+    patch = swe.get("test_patch", "") or ""
+    file_tests: dict[str, set[str]] = {}
+    current = None
+    for line in patch.splitlines():
+        m = re.match(r"^diff --git a/(\S+)", line)
+        if m:
+            current = m.group(1)
+            file_tests.setdefault(current, set())
+            continue
+        if current and line.startswith("+"):
+            t = re.search(r"def\s+(test\w+)", line)
+            if t:
+                file_tests[current].add(t.group(1))
+
+    files = list(file_tests)
+    nodes = []
+    for name in swe.get("fail_to_pass", []) + swe.get("pass_to_pass", []):
+        if "::" in name or "/" in name:
+            nodes.append(name)
+            continue
+        hit = next((f for f in files if name in file_tests[f]), None)
+        nodes.append(f"{hit or (files[0] if files else '')}::{name}"
+                     if (hit or files) else name)
+    return nodes

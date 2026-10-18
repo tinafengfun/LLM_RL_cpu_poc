@@ -88,5 +88,41 @@ class TestSWEBenchLoader(unittest.TestCase):
         self.assertEqual({x.group_id for x in groups[0]}, {0})
 
 
+_TEST_PATCH = """\
+diff --git a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py
+index aaa..bbb 100644
+--- a/sympy/core/tests/test_arit.py
++++ b/sympy/core/tests/test_arit.py
+@@ -1,2 +1,6 @@
++def test_issue_14941():
++    assert True
++
+ def test_old():
+     pass
+"""
+
+
+class TestResolveTestNodes(unittest.TestCase):
+    def test_bare_names_anchor_to_patch_file(self):
+        from rl_sim.swebench import resolve_test_nodes
+        swe = {"fail_to_pass": ["test_issue_14941"],
+               "pass_to_pass": ["test_old"],
+               "test_patch": _TEST_PATCH}
+        nodes = resolve_test_nodes(swe)
+        self.assertEqual(nodes[0], "sympy/core/tests/test_arit.py::test_issue_14941")
+        self.assertEqual(nodes[1], "sympy/core/tests/test_arit.py::test_old")
+
+    def test_full_node_ids_pass_through(self):
+        from rl_sim.swebench import resolve_test_nodes
+        swe = {"fail_to_pass": ["a/b.py::test_x"], "pass_to_pass": [],
+               "test_patch": ""}
+        self.assertEqual(resolve_test_nodes(swe), ["a/b.py::test_x"])
+
+    def test_no_patch_falls_back_to_bare(self):
+        from rl_sim.swebench import resolve_test_nodes
+        swe = {"fail_to_pass": ["test_x"], "pass_to_pass": [], "test_patch": ""}
+        self.assertEqual(resolve_test_nodes(swe), ["test_x"])
+
+
 if __name__ == "__main__":
     unittest.main()
