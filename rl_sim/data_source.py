@@ -33,6 +33,7 @@ class Task:
     solution: str = ""  # MockEngine fallback reference (NOT shown to model)
     image_path: str | None = None  # V1/V2
     split: str = "train"  # train | eval
+    swe: dict = field(default_factory=dict)  # SWE line: instance payload for node2
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +214,8 @@ class RolloutDataSource:
             groups.append([
                 Sample(prompt=task.prompt, task_id=task.task_id, task_line=task.line,
                        group_id=gid, image_path=task.image_path,
-                       metadata={"tier": task.tier, "max_turns": task.max_turns})
+                       metadata={"tier": task.tier, "max_turns": task.max_turns,
+                                 **({"swe": task.swe} if task.swe else {})})
                 for _ in range(self.n)
             ])
         return groups

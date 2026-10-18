@@ -32,6 +32,7 @@ class TaskLine(enum.Enum):
     L3_SEARCH = "L3"  # multi-hop QA over local corpus
     V1_CHART = "V1"  # chart / document QA (multimodal)
     V2_GEOM = "V2"  # visual geometry (multimodal)
+    SWE = "SWE"  # SWE-bench instance, executed on node2 (design doc 09)
     MOCK = "MOCK"  # synthetic fallback
 
 

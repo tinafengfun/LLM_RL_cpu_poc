@@ -19,7 +19,7 @@ class TestTaskLine(unittest.TestCase):
     def test_five_real_lines_plus_mock(self):
         self.assertEqual(
             {t.value for t in TaskLine},
-            {"A", "L1", "L2", "L3", "V1", "V2", "MOCK"},
+            {"A", "L1", "L2", "L3", "V1", "V2", "SWE", "MOCK"},
         )
 
 
