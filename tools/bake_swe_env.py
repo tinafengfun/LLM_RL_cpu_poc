@@ -166,9 +166,17 @@ def step_verify(root: str, repo: str, venv_tag: str = "py311") -> None:
         env = dict(os.environ, PYTHONPATH=worktree)
         subprocess.run([py, "-c", "import sympy; print('sympy', sympy.__version__)"],
                        check=True, env=env, cwd=worktree)
-        from rl_sim.swebench import resolve_test_nodes
-        nodes = resolve_test_nodes(inst)
-        node = nodes[0] if nodes else ""
+        from rl_sim.swebench import parse_instance, resolve_test_nodes
+        inst = parse_instance(inst)
+        nodes = resolve_test_nodes({
+            "fail_to_pass": inst.fail_to_pass,
+            "pass_to_pass": inst.pass_to_pass,
+            "test_patch": inst.test_patch,
+        })
+        if not nodes:
+            print("[verify] no test nodes resolvable; skipping collect")
+            return
+        node = nodes[0]
         r = subprocess.run([py, "-m", "pytest", node, "--collect-only", "-q"],
                            env=env, cwd=worktree, capture_output=True, text=True)
         if r.returncode not in (0, 5):  # 5 = no tests collected
