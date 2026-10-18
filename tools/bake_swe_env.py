@@ -142,11 +142,10 @@ def step_verify(root: str, repo: str, venv_tag: str = "py311") -> None:
     with open(inst_path, encoding="utf-8") as f:
         inst = json.loads(f.readline())
     commit = inst["base_commit"]
+    # The venv is used IN PLACE (read-only shared layer, DSec-style): venv
+    # scripts carry build-path shebangs, so relocating via tarball breaks them.
+    venv = os.path.join(root, "envs", venv_tag)
     with tempfile.TemporaryDirectory(prefix="bake_verify_") as td:
-        venv = os.path.join(td, "venv")
-        with tarfile.open(os.path.join(root, "envs", f"{venv_tag}.tar.gz")) as tar:
-            tar.extractall(td, filter="data")
-        os.rename(os.path.join(td, venv_tag), venv)
         worktree = os.path.join(td, "wt")
         subprocess.run(["git", "--git-dir", git_dir, "worktree", "add",
                         "--detach", worktree, commit], check=True,
