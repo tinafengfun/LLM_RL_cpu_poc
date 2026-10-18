@@ -14,6 +14,7 @@
 | [docs/02_poc_design.md](docs/02_poc_design.md) | PoC 设计 v3.1：两大真实场景任务（长程 agentic / 多模态）、unshare 禁网隔离、asyncio 到达过程、双列计时、E0–E6 实验、验证标准（§10 附修订记录） |
 | [docs/03_execution_plan.md](docs/03_execution_plan.md) | 执行计划 v3.1：目标节点（10.239.23.91）环境、/workspace 磁盘选型、里程碑 M0–M6、验证方案、风险对策 |
 | [docs/05_dev_plan.md](docs/05_dev_plan.md) | 开发规范与任务分解：21 个 task、4 个集成门、单测验收制、开发机/节点分工 |
+| [docs/09_dual_node_swebench_design.md](docs/09_dual_node_swebench_design.md) | 双节点设计 v1.0：node1（rl_sim+模拟 GPU）+ node2（SWE-bench sandbox 专用节点），HTTP sandboxd、agent loop 在 sandbox 侧、adapter 留存 logprob、T22–T31 任务拆分 |
 
 ## 组件对照表（PoC ↔ 真实系统）
 
