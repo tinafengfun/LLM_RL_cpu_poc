@@ -32,6 +32,8 @@ import time
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 HF_API = "https://datasets-server.huggingface.co/rows"
 DATASET = "princeton-nlp/SWE-bench_Verified"
 
