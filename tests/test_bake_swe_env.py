@@ -46,6 +46,17 @@ class TestBakeHelpers(unittest.TestCase):
         with self.assertRaises(ValueError):
             bake.select_subset([{"repo": "x/y"}], "sympy/sympy")
 
+    def test_min_version_filter(self):
+        rows = [
+            {"repo": "sympy/sympy", "instance_id": "s1", "version": "1.9"},
+            {"repo": "sympy/sympy", "instance_id": "s2", "version": "1.11"},
+            {"repo": "sympy/sympy", "instance_id": "s3", "version": "1.12"},
+        ]
+        got = bake.select_subset(rows, "sympy/sympy", min_version="1.11")
+        self.assertEqual([r["instance_id"] for r in got], ["s2", "s3"])
+        self.assertEqual(bake.parse_version("1.11"), (1, 11))
+        self.assertEqual(bake.parse_version(""), (0,))
+
     def test_build_manifest(self):
         m = bake.build_manifest("/workspace/swebench", "sympy/sympy",
                                 "/workspace/swebench/repo/sympy.git",

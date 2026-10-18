@@ -51,14 +51,23 @@ def rows_to_instances(payload: dict) -> list[dict]:
     return [r["row"] for r in payload.get("rows", []) if "row" in r]
 
 
+def parse_version(v: str) -> tuple:
+    parts = [int(x) for x in str(v).split(".")[:2] if x.isdigit()]
+    return tuple(parts) if parts else (0,)
+
+
 def select_subset(instances: list[dict], repo: str,
-                  limit: int | None = None) -> list[dict]:
+                  limit: int | None = None,
+                  min_version: str | None = None) -> list[dict]:
     out = [r for r in instances if r.get("repo") == repo]
+    if min_version is not None:
+        floor = parse_version(min_version)
+        out = [r for r in out if parse_version(r.get("version", "0")) >= floor]
     out.sort(key=lambda r: str(r.get("instance_id", "")))
     if limit is not None:
         out = out[:limit]
     if not out:
-        raise ValueError(f"no instances for repo={repo}")
+        raise ValueError(f"no instances for repo={repo} min_version={min_version}")
     return out
 
 
@@ -86,7 +95,8 @@ def _get(url: str, timeout: int = 60) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def step_fetch(root: str, repo: str, limit: int) -> str:
+def step_fetch(root: str, repo: str, limit: int,
+               min_version: str | None = None) -> str:
     os.makedirs(root, exist_ok=True)
     rows: list[dict] = []
     offset, page = 0, 100
@@ -97,7 +107,7 @@ def step_fetch(root: str, repo: str, limit: int) -> str:
         rows.extend(rows_to_instances(payload))
         offset += page
         print(f"[fetch] {offset}/{total}")
-    subset = select_subset(rows, repo, limit)
+    subset = select_subset(rows, repo, limit, min_version)
     path = os.path.join(root, "instances.jsonl")
     with open(path, "w", encoding="utf-8") as f:
         for r in subset:
@@ -170,11 +180,13 @@ def main() -> None:
     ap.add_argument("--root", default="/workspace/swebench")
     ap.add_argument("--repo", default="sympy/sympy")
     ap.add_argument("--limit", type=int, default=50)
+    ap.add_argument("--min-version", default="1.11",
+                    help="drop instances older than this (old sympy needs py<3.10)")
     ap.add_argument("--venv-tag", default="py311")
     ap.add_argument("--deps", nargs="*", default=["pytest", "mpmath"])
     args = ap.parse_args()
     if args.step in ("fetch", "all"):
-        step_fetch(args.root, args.repo, args.limit)
+        step_fetch(args.root, args.repo, args.limit, args.min_version)
     if args.step in ("clone", "all"):
         step_clone(args.root, args.repo)
     if args.step in ("venv", "all"):
