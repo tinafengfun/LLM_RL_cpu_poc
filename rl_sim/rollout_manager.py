@@ -14,7 +14,12 @@ asyncio bounded-queue pipeline (design v3.1 section 5.2):
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+import urllib.request
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
 
 from rl_sim.data_source import RolloutDataSource, Task, task_by_id
 from rl_sim.reward import compute_reward
@@ -23,6 +28,34 @@ from rl_sim.types import Sample, SampleStatus
 
 # lines this pipeline executes directly (L1/L2 repo tasks: T16 integration)
 _SUPPORTED_LINES = {"A", "V1", "V2", "L3", "MOCK"}
+
+
+@dataclass
+class RemoteSWEConfig:
+    """node2 trajectory service binding (design 09 section 4/5.2)."""
+    sandboxd_url: str
+    adapter_url: str          # advertised to node2 agent_runners (node1 address!)
+    git_dir: str              # on node2, e.g. /workspace/swebench/repo/sympy.git
+    venv: str = ""            # on node2, e.g. /workspace/swebench/envs/py311
+    max_turns: int = 40
+    agent_timeout_s: float = 1800.0
+    grade_timeout_s: float = 600.0
+    poll_interval_s: float = 2.0
+    http_timeout_s: float = 30.0
+    adapter_log_dir: str = "adapter_log"  # node1-local; token/logprob source
+
+
+def _post_json(url: str, obj: dict, timeout_s: float) -> dict:
+    req = urllib.request.Request(url, data=json.dumps(obj).encode(),
+                                 headers={"Content-Type": "application/json"},
+                                 method="POST")
+    with urllib.request.urlopen(req, timeout=timeout_s) as r:
+        return json.loads(r.read())
+
+
+def _get_json(url: str, timeout_s: float) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout_s) as r:
+        return json.loads(r.read())
 
 
 def reward_spec_of(task: Task) -> dict:
@@ -36,7 +69,8 @@ def reward_spec_of(task: Task) -> dict:
 class RolloutManager:
     def __init__(self, data_source: RolloutDataSource, engine, sandbox_pool: SandboxPool,
                  monitor=None, gen_concurrency: int = 16, drop_zero_var: bool = True,
-                 abort_after_groups: int | None = None, multi_turn_fn=None) -> None:
+                 abort_after_groups: int | None = None, multi_turn_fn=None,
+                 remote_swe: RemoteSWEConfig | None = None) -> None:
         self.ds = data_source
         self.engine = engine
         self.sandbox = sandbox_pool
@@ -45,6 +79,7 @@ class RolloutManager:
         self.drop_zero_var = drop_zero_var
         self.abort_after_groups = abort_after_groups
         self.multi_turn_fn = multi_turn_fn
+        self.remote_swe = remote_swe
         self.partial_buffer: list[Sample] = []  # aborted partial rollouts
         self.stats = {"zero_var_groups": 0, "aborted": 0, "requeued": 0}
         # live counters for observability/demo (read by sampler threads; GIL-safe)
@@ -85,15 +120,104 @@ class RolloutManager:
 
     async def _process_group(self, group: list[Sample], sem: asyncio.Semaphore) -> list[Sample]:
         # group barrier: gather waits for the slowest sample (the RL straggler)
+        if group[0].task_line == "SWE" and self.remote_swe is not None:
+            out = list(await asyncio.gather(
+                *(self._run_swe_one(s) for s in group)))
+            self.live["groups_done"] += 1
+            return out
         task = task_by_id(group[0].task_id)
         out = list(await asyncio.gather(*(self._generate_one(s, task, sem) for s in group)))
         self.live["groups_done"] += 1
         return out
 
+    # ------------------------------------------------------------------ remote SWE
+    async def _run_swe_one(self, sample: Sample) -> Sample:
+        """Dispatch one trajectory to node2 sandboxd and poll it (design 09 §4).
+
+        node1 does NO generation here: the agent loop lives on node2 and calls
+        back to the node1 adapter per turn. Token/logprob data lands in the
+        node1-local adapter log; reward comes from the node2 grader.
+        NOTE: abort restarts the trajectory from scratch on requeue (no
+        mid-trajectory state preservation — DSec pause/resume is out of scope).
+        """
+        cfg = self.remote_swe
+        assert cfg is not None
+        traj_id = f"{sample.task_id}-g{sample.group_id}-{uuid.uuid4().hex[:8]}"
+        sample.metadata["traj_id"] = traj_id
+        body = {"traj_id": traj_id, "swe": sample.metadata["swe"],
+                "adapter_url": cfg.adapter_url, "git_dir": cfg.git_dir,
+                "venv": cfg.venv, "max_turns": cfg.max_turns,
+                "agent_timeout_s": cfg.agent_timeout_s,
+                "grade_timeout_s": cfg.grade_timeout_s}
+        self.live["gen_waiting"] += 1
+        try:
+            await asyncio.to_thread(
+                _post_json, cfg.sandboxd_url + "/trajectory/start", body,
+                cfg.http_timeout_s)
+            while True:
+                await asyncio.sleep(cfg.poll_interval_s)
+                st = await asyncio.to_thread(
+                    _get_json,
+                    f"{cfg.sandboxd_url}/trajectory/{traj_id}/status",
+                    cfg.http_timeout_s)
+                if st["state"] != "running":
+                    break
+            if st["state"] == "done":
+                r = st["result"]
+                sample.reward = float(r.get("reward", 0.0))
+                sample.turns = int(r.get("turns", 0))
+                sample.status = SampleStatus.COMPLETED
+                sample.sandbox.update({
+                    "exec_wall_s": r.get("exec_wall_total_s"),
+                    "gen_lat_s": r.get("gen_lat_total_s"),
+                    "traj_status": r.get("status"),
+                    "grade": r.get("grade", {}),
+                })
+                self._fill_logprob(sample, traj_id)
+            else:
+                sample.status = SampleStatus.SANDBOX_ERROR
+                sample.reward = 0.0
+                sample.sandbox["detail"] = f"trajectory {st['state']}"
+            return sample
+        except asyncio.CancelledError:
+            try:  # abort the remote trajectory; group accounting continues
+                await asyncio.to_thread(
+                    _post_json, cfg.sandboxd_url + "/trajectory/abort",
+                    {"traj_id": traj_id}, cfg.http_timeout_s)
+            except Exception:  # noqa: BLE001 - best effort abort
+                pass
+            raise
+        finally:
+            self.live["gen_waiting"] -= 1
+            self.live["done"] += 1
+            gid = sample.group_id
+            if gid in self.live["group_progress"]:
+                self.live["group_progress"][gid][0] += 1
+
+    def _fill_logprob(self, sample: Sample, traj_id: str) -> None:
+        """Sum per-token logprobs the adapter retained for this trajectory."""
+        cfg = self.remote_swe
+        p = Path(cfg.adapter_log_dir) / f"{traj_id}.jsonl"
+        total_lp, ntok = 0.0, 0
+        try:
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    rec = json.loads(line)
+                    for t in rec.get("out_tokens", []):
+                        total_lp += t.get("lp", 0.0)
+                        ntok += 1
+        except OSError:
+            pass
+        sample.rollout_logprob = total_lp
+        sample.num_tokens = ntok
+
     async def generate_async(self, rollout_id: int, batch_size: int) -> dict:
         t0 = time.perf_counter()
         groups = self._drain_buffer() + self.ds.get_groups(batch_size)
-        groups = [g for g in groups if g and g[0].task_line in _SUPPORTED_LINES]
+        supported = set(_SUPPORTED_LINES)
+        if self.remote_swe is not None:
+            supported.add("SWE")
+        groups = [g for g in groups if g and g[0].task_line in supported]
         self.live.update(total=sum(len(g) for g in groups), done=0,
                          groups_done=0, groups_total=len(groups),
                          group_progress={g[0].group_id: [0, len(g)] for g in groups})

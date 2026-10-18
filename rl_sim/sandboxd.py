@@ -26,6 +26,7 @@ import os
 import resource
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -59,13 +60,16 @@ class SandboxRegistry:
     def __init__(self, scratch_root: str = DEFAULT_SCRATCH,
                  max_concurrent_exec: int = 32,
                  mem_cap_mb: int = 60000,
-                 ttl_s: float = 600.0) -> None:
+                 ttl_s: float = 600.0,
+                 self_url: str = "http://127.0.0.1:18101") -> None:
         self.scratch_root = scratch_root
         self.max_concurrent_exec = max_concurrent_exec
         self.mem_cap_mb = mem_cap_mb
         self.ttl_s = ttl_s
+        self.self_url = self_url
         self.lock = threading.Lock()
         self.sandboxes: dict[str, SandboxEntry] = {}
+        self.trajectories: dict[str, dict] = {}
         self.created_total = 0
         self.exec_total = 0
         self.rejected_total = 0
@@ -135,7 +139,85 @@ class SandboxRegistry:
                 "rejected_total": self.rejected_total,
                 "exec_wall_total_s": round(self.exec_wall_total, 3),
                 "running_execs": sum(1 for e in self.sandboxes.values() if e.proc),
+                "trajectories_active": sum(
+                    1 for t in self.trajectories.values()
+                    if t["proc"].poll() is None),
+                "trajectories_total": len(self.trajectories),
             }
+
+    # -- trajectories (agent_runner + grader subprocess, T29) --------------
+    def start_trajectory(self, req: dict) -> str:
+        traj_id = str(req["traj_id"])
+        with self.lock:
+            if traj_id in self.trajectories:
+                raise ValueError(f"trajectory {traj_id} exists")
+        run_root = req.get("run_root") or os.path.join(self.scratch_root, "runs")
+        run_dir = os.path.join(run_root, traj_id)
+        os.makedirs(run_dir, exist_ok=True)
+        swe_file = os.path.join(run_dir, "swe.json")
+        with open(swe_file, "w", encoding="utf-8") as f:
+            json.dump(req["swe"], f)
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cmd = [sys.executable, "-m", "rl_sim.trajectory_worker",
+               "--adapter-url", req["adapter_url"],
+               "--sandboxd-url", self.self_url,
+               "--git-dir", req["git_dir"],
+               "--venv", req.get("venv", ""),
+               "--run-dir", run_dir,
+               "--swe-file", swe_file,
+               "--traj-id", traj_id,
+               "--max-turns", str(req.get("max_turns", 40)),
+               "--agent-timeout-s", str(req.get("agent_timeout_s", 1800)),
+               "--grade-timeout-s", str(req.get("grade_timeout_s", 600))]
+        log = open(os.path.join(run_dir, "worker.log"), "ab")
+        proc = subprocess.Popen(cmd, cwd=repo_root, stdout=log,
+                                stderr=subprocess.STDOUT,
+                                start_new_session=True)
+        with self.lock:
+            self.trajectories[traj_id] = {
+                "proc": proc, "run_dir": run_dir,
+                "started_ts": time.time(), "log": log}
+        return traj_id
+
+    def trajectory_status(self, traj_id: str) -> dict:
+        with self.lock:
+            t = self.trajectories.get(traj_id)
+        if t is None:
+            raise KeyError(traj_id)
+        rc = t["proc"].poll()
+        result_file = os.path.join(t["run_dir"], "result.json")
+        out = {"traj_id": traj_id,
+               "started_ts": t["started_ts"],
+               "elapsed_s": round(time.time() - t["started_ts"], 3)}
+        if rc is None:
+            out["state"] = "running"
+        elif os.path.exists(result_file):
+            out["state"] = "done"
+            with open(result_file, encoding="utf-8") as f:
+                out["result"] = json.load(f)
+        else:
+            out["state"] = "failed"
+            out["rc"] = rc
+            log_path = os.path.join(t["run_dir"], "worker.log")
+            try:
+                with open(log_path, encoding="utf-8") as f:
+                    out["log_tail"] = f.read()[-2000:]
+            except OSError:
+                out["log_tail"] = ""
+        return out
+
+    def abort_trajectory(self, traj_id: str) -> bool:
+        with self.lock:
+            t = self.trajectories.get(traj_id)
+        if t is None:
+            return False
+        proc = t["proc"]
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +323,12 @@ def make_handler(registry: SandboxRegistry):
                 return self._json(200, {"ok": True})
             if self.path == "/stats":
                 return self._json(200, registry.stats())
+            if self.path.startswith("/trajectory/") and self.path.endswith("/status"):
+                traj_id = self.path.split("/")[2]
+                try:
+                    return self._json(200, registry.trajectory_status(traj_id))
+                except KeyError:
+                    return self._json(404, {"error": f"unknown trajectory {traj_id}"})
             return self._json(404, {"error": "unknown path"})
 
         def do_POST(self):
@@ -262,6 +350,12 @@ def make_handler(registry: SandboxRegistry):
                         env_extra=req.get("env")))
                 if self.path == "/sandbox/stop":
                     return self._json(200, {"stopped": registry.stop(req["sandbox_id"])})
+                if self.path == "/trajectory/start":
+                    traj_id = registry.start_trajectory(req)
+                    return self._json(200, {"traj_id": traj_id, "state": "running"})
+                if self.path == "/trajectory/abort":
+                    return self._json(200,
+                                      {"aborted": registry.abort_trajectory(req["traj_id"])})
                 return self._json(404, {"error": "unknown path"})
             except KeyError as ke:
                 return self._json(404, {"error": f"unknown sandbox {ke}"})
@@ -284,7 +378,8 @@ def main() -> None:
     args = ap.parse_args()
 
     registry = SandboxRegistry(args.scratch, args.max_concurrent_exec,
-                               args.mem_cap_mb, args.ttl_s)
+                               args.mem_cap_mb, args.ttl_s,
+                               self_url=f"http://127.0.0.1:{args.port}")
 
     def reaper():
         while True:
