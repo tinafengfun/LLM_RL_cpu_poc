@@ -301,6 +301,39 @@ def exec_in_sandbox(registry: SandboxRegistry, entry: SandboxEntry, cmd: str,
 # HTTP layer
 # ---------------------------------------------------------------------------
 
+def _read_cpu_times() -> tuple[float, float]:
+    """(busy, total) jiffies from /proc/stat."""
+    with open("/proc/stat", encoding="utf-8") as f:
+        parts = f.readline().split()[1:]
+    vals = [float(x) for x in parts]
+    idle = vals[3] + vals[4]  # idle + iowait
+    total = sum(vals)
+    return total - idle, total
+
+
+def read_sys_stats(sample_s: float = 0.1) -> dict:
+    """Node-level CPU busy% (short delta), load, memory."""
+    b0, t0 = _read_cpu_times()
+    time.sleep(sample_s)
+    b1, t1 = _read_cpu_times()
+    busy_pct = 100.0 * (b1 - b0) / max(1.0, t1 - t0)
+    mem: dict[str, float] = {}
+    with open("/proc/meminfo", encoding="utf-8") as f:
+        for line in f:
+            k, _, rest = line.partition(":")
+            if k in ("MemTotal", "MemAvailable"):
+                mem[k] = float(rest.split()[0]) / 1024.0  # kB -> MB
+    with open("/proc/loadavg", encoding="utf-8") as f:
+        load1 = float(f.read().split()[0])
+    return {
+        "ts": time.time(),
+        "cpu_busy_pct": round(busy_pct, 2),
+        "load1": load1,
+        "mem_total_mb": mem.get("MemTotal", 0.0),
+        "mem_used_mb": round(mem.get("MemTotal", 0.0) - mem.get("MemAvailable", 0.0), 1),
+    }
+
+
 def make_handler(registry: SandboxRegistry):
     class Handler(BaseHTTPRequestHandler):
         def _json(self, code: int, obj) -> None:
@@ -323,6 +356,8 @@ def make_handler(registry: SandboxRegistry):
                 return self._json(200, {"ok": True})
             if self.path == "/stats":
                 return self._json(200, registry.stats())
+            if self.path == "/sysstats":
+                return self._json(200, read_sys_stats())
             if self.path.startswith("/trajectory/") and self.path.endswith("/status"):
                 traj_id = self.path.split("/")[2]
                 try:
