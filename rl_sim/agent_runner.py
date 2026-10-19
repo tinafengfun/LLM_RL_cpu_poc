@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import urllib.error
 from pathlib import Path
 
 from rl_sim import netutil
@@ -131,8 +132,16 @@ class AgentRunner:
                 try:
                     resp = self.adapter.generate(self.traj_id, turn,
                                                  messages, tools=TOOLS)
+                except urllib.error.HTTPError as e:
+                    # the adapter's 502 body carries the backend's own message
+                    try:
+                        detail = e.read().decode("utf-8", "replace")[:200]
+                    except Exception:  # noqa: BLE001 - body unreadable
+                        detail = ""
+                    status = f"adapter_error: HTTP {e.code} {detail}".strip()
+                    break
                 except Exception as e:  # noqa: BLE001
-                    status = f"adapter_error: {type(e).__name__}"
+                    status = f"adapter_error: {type(e).__name__}: {e}"
                     break
                 gen_lat = time.time() - t_gen
 

@@ -4,6 +4,7 @@ import json
 import shutil
 import tempfile
 import unittest
+import urllib.error
 
 from rl_sim.agent_runner import TOOLS, AgentRunner
 
@@ -122,7 +123,25 @@ class TestAgentRunner(unittest.TestCase):
                         run_dir=self.run_dir)
         meta = r.run()
         self.assertIn("adapter_error", meta["status"])
+        self.assertIn("ConnectionError", meta["status"])
         self.assertTrue(sandbox.stopped)
+
+    def test_adapter_httperror_carries_backend_body(self):
+        # the adapter's 502 body holds the backend's own message; the
+        # trajectory status must surface it, not just "HTTPError"
+        import io
+        err = urllib.error.HTTPError("http://a/generate", 502, "Bad Gateway",
+                                     {}, io.BytesIO(b'{"error": "backend HTTP 400: ctx full"}'))
+
+        class HTTPBoomAdapter(FakeAdapter):
+            def generate(self, *a, **k):
+                raise err
+
+        r = AgentRunner(SWE, HTTPBoomAdapter([]), FakeSandbox(),
+                        git_dir="/x/y.git", run_dir=self.run_dir)
+        meta = r.run()
+        self.assertIn("HTTP 502", meta["status"])
+        self.assertIn("ctx full", meta["status"])
 
     def test_observation_truncation(self):
         class LoudSandbox(FakeSandbox):

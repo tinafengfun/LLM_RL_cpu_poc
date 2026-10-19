@@ -21,6 +21,7 @@ import argparse
 import json
 import threading
 import time
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -149,6 +150,11 @@ def make_handler(adapter: Adapter):
                 return self._json(200, adapter.generate(req))
             except KeyError as ke:
                 return self._json(400, {"error": f"missing field {ke}"})
+            except urllib.error.HTTPError as e:
+                # surface the backend's own error body (llama.cpp puts the
+                # cause there, e.g. "exceeds the available context size")
+                body = e.read().decode("utf-8", "replace")[:300]
+                return self._json(502, {"error": f"backend HTTP {e.code}: {body}"})
             except Exception as e:  # noqa: BLE001 - engine/router failure
                 return self._json(502, {"error": f"{type(e).__name__}: {e}"})
 

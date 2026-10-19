@@ -114,6 +114,22 @@ class TestAdapterHTTP(unittest.TestCase):
         finally:
             self.router.fail = False
 
+    def test_backend_httperror_body_surfaced(self):
+        # llama.cpp puts the cause in the response body (e.g. context
+        # overflow); the adapter's 502 must carry it, not just "HTTPError"
+        import io
+        body = b'{"error": {"message": "exceeds the available context size"}}'
+        err = urllib.error.HTTPError("http://x", 400, "Bad Request", {},
+                                     io.BytesIO(body))
+        self.router.forward = lambda *a: (_ for _ in ()).throw(err)
+        try:
+            code, r = self._post("/generate", {"traj_id": "t", "messages": []})
+            self.assertEqual(code, 502)
+            self.assertIn("backend HTTP 400", r["error"])
+            self.assertIn("context size", r["error"])
+        finally:
+            del self.router.forward  # drop instance shadow, restore class method
+
     def test_stats(self):
         with urllib.request.urlopen(
                 f"http://127.0.0.1:{self.port}/stats", timeout=5) as r:
