@@ -77,8 +77,13 @@ class AgentRunner:
     # -- steps -------------------------------------------------------------
     def _setup_repo(self, sandbox_id: str) -> None:
         commit = self.swe["base_commit"]
-        cmd = (f"git -c safe.directory={self.git_dir} "
-               f"clone --shared --no-checkout {self.git_dir} repo "
+        # sandbox exec drops to nobody on node2; git refuses the root-owned
+        # mirror as "dubious ownership". `-c safe.directory` does NOT cover
+        # the clone's upload-pack child (git 2.43, verified) — a global
+        # config under a sandbox-local HOME does.
+        cmd = (f"mkdir -p .sandhome && export HOME=$PWD/.sandhome && "
+               f"git config --global --add safe.directory {self.git_dir} && "
+               f"git clone --shared --no-checkout {self.git_dir} repo "
                f"&& cd repo && git checkout -q {commit} && git log --oneline -1")
         r = self.sandbox.exec(sandbox_id, cmd, timeout_s=300)
         if r["rc"] != 0:
