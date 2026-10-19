@@ -19,6 +19,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 from rl_sim.data_source import Task
 from rl_sim.engine import Engine, extract_code
@@ -45,6 +46,7 @@ class LlamaServerManager:
         self.specs = {s.name: s for s in specs}
         self.log_dir = Path(log_dir)
         self._procs: dict[str, subprocess.Popen] = {}
+        self._log_files: dict[str, BinaryIO] = {}
 
     def build_cmd(self, spec: InstanceSpec) -> list[str]:
         cmd = []
@@ -61,8 +63,13 @@ class LlamaServerManager:
         spec = self.specs[name]
         self.log_dir.mkdir(parents=True, exist_ok=True)
         log = open(self.log_dir / f"{name}.log", "ab")
-        self._procs[name] = subprocess.Popen(self.build_cmd(spec),
-                                             stdout=log, stderr=subprocess.STDOUT)
+        try:
+            self._procs[name] = subprocess.Popen(self.build_cmd(spec),
+                                                 stdout=log, stderr=subprocess.STDOUT)
+        except Exception:
+            log.close()
+            raise
+        self._log_files[name] = log
 
     def start_all(self) -> None:
         for name in self.specs:
@@ -102,6 +109,9 @@ class LlamaServerManager:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        log = self._log_files.pop(name, None)
+        if log is not None:
+            log.close()
 
     def stop_all(self) -> None:
         for name in list(self._procs):

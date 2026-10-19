@@ -6,6 +6,7 @@ by RL_SIM_NODE=1 and requires the built binary + GGUF on the node.
 
 import json
 import os
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -58,6 +59,32 @@ class TestBuildCmd(unittest.TestCase):
     def test_no_pinning_when_cores_empty(self):
         mgr = LlamaServerManager("/bin/ls", [InstanceSpec(name="e0", port=1)])
         self.assertNotIn("taskset", mgr.build_cmd(mgr.specs["e0"])[0])
+
+
+class TestLogHandleLifecycle(unittest.TestCase):
+    """start() opens the engine log; stop() must close it (no ResourceWarning)."""
+
+    def test_log_file_closed_on_stop(self):
+        mgr = LlamaServerManager("/bin/sleep", [InstanceSpec(name="e0", port=1)],
+                                 log_dir=tempfile.mkdtemp())
+        mgr.build_cmd = lambda spec: ["/bin/sleep", "30"]  # stub engine binary
+        mgr.start("e0")
+        handle = mgr._log_files["e0"]
+        self.assertFalse(handle.closed)
+        mgr.stop("e0")
+        self.assertTrue(handle.closed)
+        self.assertNotIn("e0", mgr._log_files)
+
+    def test_stop_all_closes_all_handles(self):
+        mgr = LlamaServerManager("/bin/sleep", [InstanceSpec(name=n, port=1)
+                                                for n in ("e0", "e1")],
+                                 log_dir=tempfile.mkdtemp())
+        mgr.build_cmd = lambda spec: ["/bin/sleep", "30"]
+        mgr.start_all()
+        handles = list(mgr._log_files.values())
+        mgr.stop_all()
+        self.assertTrue(all(h.closed for h in handles))
+        self.assertEqual(mgr._log_files, {})
 
 
 class TestLocalEngineStubbed(unittest.TestCase):
