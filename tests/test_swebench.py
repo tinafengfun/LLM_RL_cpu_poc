@@ -71,6 +71,8 @@ class TestSWEBenchLoader(unittest.TestCase):
         self.assertEqual(t.tier, "B")
         self.assertEqual(t.max_turns, 25)
         self.assertEqual(t.prompt, f"fix issue {t.swe['instance_id']}")
+        # the agent on node2 builds its first user message from this key
+        self.assertEqual(t.swe["problem_statement"], t.prompt)
         self.assertIn("test_patch", t.swe)
         self.assertNotIn("patch", t.swe)  # gold patch must not ship
         self.assertNotIn("gold_patch", t.swe)
