@@ -162,6 +162,46 @@ class TestAgentRunner(unittest.TestCase):
         self.assertLess(len(tool_msg["content"]), 1200)
         self.assertIn("truncated", tool_msg["content"])
 
+    def test_context_pruning_bounds_prompt_growth(self):
+        big = "x" * 5000
+
+        class LoudSandbox(FakeSandbox):
+            def exec(self, sandbox_id, cmd, timeout_s=None, env=None):
+                self.execs.append(cmd)
+                if "git diff" in cmd:
+                    return super().exec(sandbox_id, cmd)
+                return {"rc": 0, "stdout": big, "stderr": "", "wall_s": 0.01}
+
+        script = [{"text": "", "tool_calls": [_tc("bash", {"cmd": f"c{i}"},
+                                                    tc_id=f"c{i}")]}
+                  for i in range(5)]
+        script.append({"text": "done", "tool_calls": [_tc("submit", {})]})
+        adapter = FakeAdapter(script)
+        r = AgentRunner(SWE, adapter, LoudSandbox(), git_dir="/x/y.git",
+                        run_dir=self.run_dir, prune_keep_tools=2,
+                        prune_old_chars=300)
+        meta = r.run()
+        self.assertEqual(meta["status"], "submitted")
+        final_tools = [m for m in adapter.calls[-1]["messages"]
+                       if m.get("role") == "tool"]
+        self.assertEqual(len(final_tools), 5)
+        for m in final_tools[:-2]:  # older observations shrink to a marker
+            self.assertLess(len(m["content"]), 400)
+            self.assertIn("elided", m["content"])
+        for m in final_tools[-2:]:  # the last 2 stay full-size
+            self.assertGreater(len(m["content"]), 4000)
+
+    def test_prune_idempotent(self):
+        r = AgentRunner(SWE, FakeAdapter([]), FakeSandbox(), git_dir="/x/y.git",
+                        run_dir=self.run_dir, prune_keep_tools=1,
+                        prune_old_chars=100)
+        msgs = [{"role": "tool", "content": "y" * 1000},
+                {"role": "tool", "content": "z" * 1000}]
+        r._prune_messages(msgs)
+        once = msgs[0]["content"]
+        r._prune_messages(msgs)
+        self.assertEqual(msgs[0]["content"], once)  # no marker accumulation
+
     def test_unknown_tool_reported(self):
         meta, adapter, _ = self._run([
             {"text": "", "tool_calls": [_tc("read_file", {"p": "x"})]},

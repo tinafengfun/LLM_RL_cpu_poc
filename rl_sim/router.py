@@ -93,6 +93,21 @@ class Router:
                     out = json.loads(resp.read().decode())
                 out["_backend"] = name
                 return out
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode("utf-8", "replace")[:200]
+                except Exception:  # noqa: BLE001 - body unreadable
+                    pass
+                if 400 <= e.code < 500:
+                    # the REQUEST's fault (e.g. prompt exceeds ctx_slot): the
+                    # backend is healthy — never poison the ring over a 4xx
+                    # (T31 run6: one oversized request killed both backends
+                    # for every sibling trajectory)
+                    raise RuntimeError(
+                        f"backend {name} HTTP {e.code}: {body}") from e
+                last_err = RuntimeError(f"backend {name} HTTP {e.code}: {body}")
+                self.ring.mark_failure(name)
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
                 last_err = e
                 self.ring.mark_failure(name)

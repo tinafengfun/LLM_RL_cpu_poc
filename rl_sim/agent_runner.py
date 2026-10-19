@@ -61,7 +61,8 @@ class AgentRunner:
                  max_turns: int = 40, agent_timeout_s: float = 1800.0,
                  obs_limit: int = 8000, profile: str = "B",
                  env_extra: dict | None = None,
-                 max_nudges: int = 2) -> None:
+                 max_nudges: int = 2,
+                 prune_keep_tools: int = 2, prune_old_chars: int = 300) -> None:
         self.swe = swe
         self.adapter = adapter
         self.sandbox = sandbox
@@ -74,6 +75,9 @@ class AgentRunner:
         self.profile = profile
         self.env_extra = env_extra or {}
         self.max_nudges = max_nudges
+        self.prune_keep_tools = prune_keep_tools
+        self.prune_old_chars = prune_old_chars
+        self._elided: set[int] = set()
 
     # -- steps -------------------------------------------------------------
     def _setup_repo(self, sandbox_id: str) -> None:
@@ -105,6 +109,26 @@ class AgentRunner:
         return (text[:half] + f"\n...[truncated {len(text) - limit} chars]...\n"
                 + text[-half:])
 
+    def _prune_messages(self, messages: list[dict]) -> None:
+        """Bound prompt growth: only the last `prune_keep_tools` tool
+        observations stay full-size; older ones shrink to a head snippet.
+
+        Agentic-RL context management — with any fixed per-slot context the
+        raw history overflows sooner or later (T31 run6 died at turn 8:
+        8884 > 8192 tokens). Recent observations carry the signal; old ones
+        decay to a marker."""
+        tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+        old = tool_idx[:-self.prune_keep_tools] if self.prune_keep_tools > 0 else tool_idx
+        for i in old:
+            if i in self._elided:
+                continue
+            content = messages[i].get("content") or ""
+            if len(content) > self.prune_old_chars:
+                messages[i]["content"] = (
+                    content[:self.prune_old_chars]
+                    + f"\n...[elided {len(content) - self.prune_old_chars} chars]")
+                self._elided.add(i)
+
     # -- main loop ---------------------------------------------------------
     def run(self) -> dict:
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -128,6 +152,7 @@ class AgentRunner:
                 if time.time() - t_start > self.agent_timeout_s:
                     status = "timeout"
                     break
+                self._prune_messages(messages)
                 t_gen = time.time()
                 try:
                     resp = self.adapter.generate(self.traj_id, turn,
