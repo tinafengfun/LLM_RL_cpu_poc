@@ -16,11 +16,11 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from rl_sim import netutil
 from rl_sim.data_source import RolloutDataSource, Task, task_by_id
 from rl_sim.reward import compute_reward
 from rl_sim.sandbox import SandboxPool
@@ -46,16 +46,11 @@ class RemoteSWEConfig:
 
 
 def _post_json(url: str, obj: dict, timeout_s: float) -> dict:
-    req = urllib.request.Request(url, data=json.dumps(obj).encode(),
-                                 headers={"Content-Type": "application/json"},
-                                 method="POST")
-    with urllib.request.urlopen(req, timeout=timeout_s) as r:
-        return json.loads(r.read())
+    return netutil.post_json(url, obj, timeout_s)
 
 
 def _get_json(url: str, timeout_s: float) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout_s) as r:
-        return json.loads(r.read())
+    return netutil.get_json(url, timeout_s)
 
 
 def reward_spec_of(task: Task) -> dict:

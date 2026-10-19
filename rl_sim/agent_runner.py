@@ -15,9 +15,9 @@ from __future__ import annotations
 import argparse
 import json
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+from rl_sim import netutil
 
 TOOLS = [
     {"type": "function", "function": {
@@ -47,13 +47,11 @@ class AdapterHTTPClient:
 
     def generate(self, traj_id: str, turn: int, messages: list[dict],
                  tools: list[dict] | None = None) -> dict:
-        req = urllib.request.Request(
+        return netutil.post_json(
             self.base_url + "/generate",
-            data=json.dumps({"traj_id": traj_id, "turn": turn,
-                             "messages": messages, "tools": tools}).encode(),
-            headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
-            return json.loads(r.read())
+            {"traj_id": traj_id, "turn": turn,
+             "messages": messages, "tools": tools},
+            self.timeout_s)
 
 
 class AgentRunner:

@@ -8,11 +8,10 @@ rows are keyed by node1 wall clock.
 
 from __future__ import annotations
 
-import json
 import threading
 import time
-import urllib.request
 
+from rl_sim import netutil
 from rl_sim.sandboxd import read_sys_stats
 
 
@@ -27,9 +26,7 @@ class DualMonitor:
         self._thread: threading.Thread | None = None
 
     def _pull(self, path: str) -> dict:
-        with urllib.request.urlopen(self.node2 + path,
-                                    timeout=self.timeout_s) as r:
-            return json.loads(r.read())
+        return netutil.get_json(self.node2 + path, timeout_s=self.timeout_s)
 
     def sample_once(self) -> dict:
         row = {"ts": time.time(), "node1_sys": read_sys_stats(sample_s=0.05)}

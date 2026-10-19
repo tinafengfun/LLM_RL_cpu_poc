@@ -6,9 +6,9 @@ node1 (cross-node, T29). Same code path both ways — only latency differs.
 
 from __future__ import annotations
 
-import json
 import urllib.error
-import urllib.request
+
+from rl_sim import netutil
 
 
 class SandboxdError(Exception):
@@ -23,13 +23,9 @@ class SandboxHTTPClient:
         self.timeout_s = timeout_s
 
     def _post(self, path: str, obj: dict, timeout_s: float | None = None) -> dict:
-        req = urllib.request.Request(
-            self.base_url + path, data=json.dumps(obj).encode(),
-            headers={"Content-Type": "application/json"}, method="POST")
         try:
-            with urllib.request.urlopen(
-                    req, timeout=timeout_s or self.timeout_s) as r:
-                return json.loads(r.read())
+            return netutil.post_json(self.base_url + path, obj,
+                                     timeout_s or self.timeout_s)
         except urllib.error.HTTPError as e:
             raise SandboxdError(e.code, e.read().decode("utf-8", "replace")) from e
 
@@ -49,13 +45,11 @@ class SandboxHTTPClient:
         return bool(self._post("/sandbox/stop", {"sandbox_id": sandbox_id})["stopped"])
 
     def stats(self) -> dict:
-        with urllib.request.urlopen(self.base_url + "/stats",
-                                    timeout=self.timeout_s) as r:
-            return json.loads(r.read())
+        return netutil.get_json(self.base_url + "/stats", self.timeout_s)
 
     def healthy(self) -> bool:
         try:
-            with urllib.request.urlopen(self.base_url + "/healthz", timeout=5) as r:
-                return r.status == 200
+            r = netutil.get_json(self.base_url + "/healthz", 5)
+            return bool(r.get("ok"))
         except Exception:
             return False
