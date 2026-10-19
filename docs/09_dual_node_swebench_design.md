@@ -172,13 +172,14 @@ node2 monitor agent 周期采样（CPU busy、IO、load、sandboxd /stats）；n
 
 ## 10. 验收标准（DoD）
 
-1. T22–T30 全部单测绿（dev 机）；T31 双节点实跑通：1 个 sympy 实例 ≥1 组（n≥2）轨迹闭环，reward 由真 pytest 评出
-2. 画像报告含：node1/node2 双侧 CPU busy 时间轴、模型调用 RPC 耗时分布（含 24ms RTT 分解）、sandbox exec 分档 p50/p99、组屏障空转、sandboxd 队列深度
-3. 单节点模式（local backend）回归不破坏：T01–T21 全部单测继续绿
-4. 06 文档补双节点实验章节；本文件随代码推送 GitHub 终审
+1. T22–T30 全部单测绿（dev 机）；T31 双节点实跑通：1 个 sympy 实例 ≥1 组（n≥2）轨迹闭环，reward 由真 pytest 评出 ✅ 2026-10-19
+2. 画像报告含：node1/node2 双侧 CPU busy 时间轴、模型调用 RPC 耗时分布（含 24ms RTT 分解）、sandbox exec 分档 p50/p99、组屏障空转、sandboxd 队列深度 ✅ 见 docs/06 G4 节（exec 分档以 turn_stats 逐轮数据呈现；组屏障空转 79s 实测）
+3. 单节点模式（local backend）回归不破坏：T01–T21 全部单测继续绿 ✅ 163 passed
+4. 06 文档补双节点实验章节；本文件随代码推送 GitHub 终审 ✅
 
 ## 11. 修订记录
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v1.0 | 2026-10-18 | 初版。决策 D1–D4 由用户拍板（HTTP sandboxd / loop 在 node2 / sympy 先行 / rl_sim 即 slime） |
+| v1.1 | 2026-10-19 | T22–T31 全部完成，G4 门通过（docs/06 G4 节）。新增 `rl_sim/netutil.py`（集群内 HTTP 绕代理）与 `train_swe.py`（双节点 driver）；G4 实跑钓出并修复 5 个集成缺陷（代理 403 / git safe.directory / problem_statement 载荷 / ctx_slot 均分溢出 / router 4xx 投毒） |
