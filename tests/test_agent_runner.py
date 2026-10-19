@@ -75,7 +75,10 @@ class TestAgentRunner(unittest.TestCase):
         self.assertEqual(meta["turns"], 2)
         self.assertIn("diff --git", meta["patch"])
         # setup clone happened, then bash cmd, then patch extraction
-        self.assertIn("git clone --shared", sandbox.execs[0])
+        # (clone carries -c safe.directory=<git_dir>: sandbox exec drops to
+        # nobody on node2, and git refuses a root-owned mirror without it)
+        self.assertIn("-c safe.directory=", sandbox.execs[0])
+        self.assertIn("clone --shared", sandbox.execs[0])
         self.assertIn("ls", sandbox.execs[1])
         self.assertTrue(sandbox.stopped)
         # artifacts persisted

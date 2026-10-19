@@ -31,7 +31,8 @@ def grade(swe: dict, patch: str, sandbox, git_dir: str,
         commit = swe["base_commit"]
         r = sandbox.exec(
             sandbox_id,
-            f"git clone --shared --no-checkout {git_dir} repo "
+            f"git -c safe.directory={git_dir} "
+            f"clone --shared --no-checkout {git_dir} repo "
             f"&& cd repo && git checkout -q {commit}",
             timeout_s=300)
         if r["rc"] != 0:

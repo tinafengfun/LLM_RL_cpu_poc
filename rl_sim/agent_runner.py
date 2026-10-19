@@ -77,7 +77,8 @@ class AgentRunner:
     # -- steps -------------------------------------------------------------
     def _setup_repo(self, sandbox_id: str) -> None:
         commit = self.swe["base_commit"]
-        cmd = (f"git clone --shared --no-checkout {self.git_dir} repo "
+        cmd = (f"git -c safe.directory={self.git_dir} "
+               f"clone --shared --no-checkout {self.git_dir} repo "
                f"&& cd repo && git checkout -q {commit} && git log --oneline -1")
         r = self.sandbox.exec(sandbox_id, cmd, timeout_s=300)
         if r["rc"] != 0:
