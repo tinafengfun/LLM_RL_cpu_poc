@@ -75,6 +75,7 @@ def main(argv=None) -> dict:
     dmon = DualMonitor(args.sandboxd_url, interval_s=args.monitor_interval_s)
     dmon.start()
     history = []
+    sample_rows = []
     t_start = time.perf_counter()
     try:
         for rid in range(args.num_rollout):
@@ -87,7 +88,15 @@ def main(argv=None) -> dict:
             history.append({"rollout_id": rid, **{k: v for k, v in data.items()
                                                   if k != "samples"}})
             for s in data["samples"]:
-                print(f"  - {s.task_id} g{s.group_id} traj={s.metadata.get('traj_id')} "
+                row = {"rollout_id": rid, "task_id": s.task_id,
+                       "group_id": s.group_id,
+                       "traj_id": s.metadata.get("traj_id"),
+                       "reward": s.reward, "turns": s.turns,
+                       "status": s.status.value,
+                       "rollout_logprob": round(s.rollout_logprob, 2),
+                       "num_tokens": s.num_tokens, "sandbox": s.sandbox}
+                sample_rows.append(row)
+                print(f"  - {s.task_id} g{s.group_id} traj={row['traj_id']} "
                       f"reward={s.reward} turns={s.turns} status={s.status.value} "
                       f"logp={s.rollout_logprob:.2f} ntok={s.num_tokens} "
                       f"sandbox={s.sandbox}")
@@ -100,6 +109,7 @@ def main(argv=None) -> dict:
                "num_rollout": args.num_rollout,
                "total_wall_s": round(time.perf_counter() - t_start, 2),
                "history": history,
+               "sample_rows": sample_rows,
                "dual_monitor": dmon.report()}
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     print(f"[done] wall={summary['total_wall_s']}s -> {out / 'summary.json'}")

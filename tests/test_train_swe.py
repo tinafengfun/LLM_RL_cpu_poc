@@ -87,6 +87,11 @@ class TestTrainSweDriver(unittest.TestCase):
         self.assertEqual(dm["node2_cpu_busy_mean"], 1.5)
         disk = json.loads((tmp / "out" / "summary.json").read_text())
         self.assertEqual(disk["mode"], "dual_node_swe")
+        rows = summary["sample_rows"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["group_id"] for r in rows}, {0})
+        self.assertTrue(all(r["traj_id"] and r["status"] == "completed"
+                            and r["reward"] == 1.0 for r in rows))
 
 
 if __name__ == "__main__":
