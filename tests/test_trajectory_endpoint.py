@@ -151,5 +151,14 @@ class TestTrajectoryEndpoint(unittest.TestCase):
         _post(self.port, "/trajectory/abort", {"traj_id": "traj-dupe"})
 
 
+class TestTimeoutLadder(unittest.TestCase):
+    def test_agent_call_timeout_exceeds_adapter_backend_timeout(self):
+        # the agent must not give up on a call the adapter still waits on
+        from rl_sim.adapter import build_parser
+        from rl_sim.trajectory_worker import ADAPTER_CALL_TIMEOUT_S
+        backend_default = build_parser().parse_args([]).backend_timeout_s
+        self.assertGreater(ADAPTER_CALL_TIMEOUT_S, backend_default)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,12 @@ from rl_sim.sandbox_client import SandboxHTTPClient
 
 GRADED_STATUSES = {"submitted", "max_turns", "timeout", "no_tool_call"}
 
+# per-call timeout to the node1 adapter — MUST exceed the adapter's own
+# --backend-timeout-s (default 1800s), else the agent gives up on a call the
+# adapter is still patiently waiting on (T32 R3: 5 trajectories degraded to
+# adapter_error at the 660s client default while engines were just queued)
+ADAPTER_CALL_TIMEOUT_S = 2000.0
+
 
 def run_trajectory(swe: dict, adapter_url: str, sandboxd_url: str,
                    git_dir: str, venv: str, run_dir: str,
@@ -30,7 +36,9 @@ def run_trajectory(swe: dict, adapter_url: str, sandboxd_url: str,
                    profile: str = "B") -> dict:
     sandbox = SandboxHTTPClient(sandboxd_url)
     env_extra = {"PATH": f"{venv}/bin:/usr/local/bin:/usr/bin:/bin"} if venv else {}
-    runner = AgentRunner(swe, AdapterHTTPClient(adapter_url), sandbox,
+    runner = AgentRunner(swe, AdapterHTTPClient(adapter_url,
+                                                timeout_s=ADAPTER_CALL_TIMEOUT_S),
+                         sandbox,
                          git_dir=git_dir, run_dir=run_dir, traj_id=traj_id,
                          agent_timeout_s=agent_timeout_s,
                          max_turns=max_turns, env_extra=env_extra,
