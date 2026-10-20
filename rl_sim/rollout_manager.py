@@ -146,15 +146,34 @@ class RolloutManager:
                 "grade_timeout_s": cfg.grade_timeout_s}
         self.live["gen_waiting"] += 1
         try:
-            await asyncio.to_thread(
-                _post_json, cfg.sandboxd_url + "/trajectory/start", body,
-                cfg.http_timeout_s)
+            try:
+                await self._start_trajectory(cfg, body)
+            except OSError as e:
+                # a dead/reset node2 must fail THIS sample, not the rollout
+                # (T32: one burst RST killed all 44 trajectories)
+                sample.status = SampleStatus.SANDBOX_ERROR
+                sample.reward = 0.0
+                sample.sandbox["detail"] = (
+                    f"start failed after retries: {type(e).__name__}: {e}")
+                return sample
+            poll_errors = 0
             while True:
                 await asyncio.sleep(cfg.poll_interval_s)
-                st = await asyncio.to_thread(
-                    _get_json,
-                    f"{cfg.sandboxd_url}/trajectory/{traj_id}/status",
-                    cfg.http_timeout_s)
+                try:
+                    st = await asyncio.to_thread(
+                        _get_json,
+                        f"{cfg.sandboxd_url}/trajectory/{traj_id}/status",
+                        cfg.http_timeout_s)
+                    poll_errors = 0
+                except OSError as e:
+                    poll_errors += 1
+                    if poll_errors < 5:
+                        continue  # transient LAN hiccup; keep polling
+                    sample.status = SampleStatus.SANDBOX_ERROR
+                    sample.reward = 0.0
+                    sample.sandbox["detail"] = (
+                        f"status poll failed x{poll_errors}: {type(e).__name__}: {e}")
+                    return sample
                 if st["state"] != "running":
                     break
             if st["state"] == "done":
@@ -188,6 +207,22 @@ class RolloutManager:
             gid = sample.group_id
             if gid in self.live["group_progress"]:
                 self.live["group_progress"][gid][0] += 1
+
+    async def _start_trajectory(self, cfg: RemoteSWEConfig, body: dict) -> None:
+        """POST /trajectory/start with bounded retry (backlog RSTs under burst
+        are transient; the sandboxd handler is idempotent per traj_id)."""
+        last: OSError | None = None
+        for attempt in range(3):
+            try:
+                await asyncio.to_thread(_post_json,
+                                        cfg.sandboxd_url + "/trajectory/start",
+                                        body, cfg.http_timeout_s)
+                return
+            except OSError as e:
+                last = e
+                await asyncio.sleep(0.5 * (attempt + 1))
+        assert last is not None
+        raise last
 
     def _fill_logprob(self, sample: Sample, traj_id: str) -> None:
         """Sum per-token logprobs the adapter retained for this trajectory."""

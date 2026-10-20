@@ -34,6 +34,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import shutil
 
+from rl_sim import netutil
+
 from rl_sim.sandbox import PROFILES, isolation_prefix
 
 DEFAULT_SCRATCH = "/tmp/sandboxd_scratch"
@@ -149,8 +151,11 @@ class SandboxRegistry:
     def start_trajectory(self, req: dict) -> str:
         traj_id = str(req["traj_id"])
         with self.lock:
-            if traj_id in self.trajectories:
-                raise ValueError(f"trajectory {traj_id} exists")
+            existing = self.trajectories.get(traj_id)
+        if existing is not None:
+            # idempotent retry: the driver's start POST may be retried after
+            # a connection reset; never spawn a duplicate worker (T32)
+            return traj_id
         run_root = req.get("run_root") or os.path.join(self.scratch_root, "runs")
         run_dir = os.path.join(run_root, traj_id)
         os.makedirs(run_dir, exist_ok=True)
@@ -423,7 +428,8 @@ def main() -> None:
                 print(f"[sandboxd] ttl reaped {sid}", flush=True)
 
     threading.Thread(target=reaper, daemon=True).start()
-    srv = ThreadingHTTPServer((args.bind, args.port), make_handler(registry))
+    srv = netutil.BurstThreadingHTTPServer((args.bind, args.port),
+                                           make_handler(registry))
     print(f"[sandboxd] listening on {args.bind}:{args.port} "
           f"scratch={args.scratch} cap={args.mem_cap_mb}MB", flush=True)
     srv.serve_forever()

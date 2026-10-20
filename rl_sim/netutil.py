@@ -14,8 +14,21 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from http.server import ThreadingHTTPServer
 
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+class BurstThreadingHTTPServer(ThreadingHTTPServer):
+    """Stdlib server with a real listen backlog for cluster endpoints.
+
+    socketserver's default request_queue_size=5 RSTs connection bursts
+    (T32: 44 simultaneous /trajectory/start connects -> ConnectionReset on
+    node1 killed the whole rollout). daemon_threads for clean shutdown.
+    """
+
+    request_queue_size = 256
+    daemon_threads = True
 
 
 def post_json(url: str, obj: dict, timeout_s: float) -> dict:

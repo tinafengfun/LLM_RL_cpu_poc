@@ -19,6 +19,9 @@ class FakeNode2State:
         self.swe_by_traj = {}
         self.done_count = 0
         self.lock = threading.Lock()
+        # fault injection: N next start/poll attempts get a dropped connection
+        self.reset_starts = 0
+        self.reset_polls = 0
 
 
 def make_fake_node2(state: FakeNode2State):
@@ -31,10 +34,17 @@ def make_fake_node2(state: FakeNode2State):
             self.end_headers()
             self.wfile.write(body)
 
+        def _drop(self):
+            # close without responding -> client sees a reset/disconnect
+            self.connection.close()
+
         def log_message(self, *a):
             pass
 
         def do_POST(self):
+            if self.path == "/trajectory/start" and state.reset_starts > 0:
+                state.reset_starts -= 1
+                return self._drop()
             n = int(self.headers.get("Content-Length", 0))
             req = json.loads(self.rfile.read(n) or b"{}")
             if self.path == "/trajectory/start":
@@ -50,6 +60,9 @@ def make_fake_node2(state: FakeNode2State):
 
         def do_GET(self):
             if self.path.startswith("/trajectory/"):
+                if state.reset_polls > 0:
+                    state.reset_polls -= 1
+                    return self._drop()
                 traj_id = self.path.split("/")[2]
                 with state.lock:
                     hang = state.swe_by_traj.get(traj_id) in state.hang_instance_ids
@@ -126,6 +139,46 @@ class TestRemoteSWE(unittest.TestCase):
         self.assertEqual(sorted(state.aborted), sorted(hung))
         self.assertEqual(mgr.stats["aborted"], 2)
         self.assertEqual(len(mgr.partial_buffer), 2)
+
+    def test_start_retry_recovers_from_reset(self):
+        state = FakeNode2State()
+        state.reset_starts = 2  # first two connect attempts die (burst RST)
+        mgr, srv = self._mgr(state)
+        try:
+            out = mgr.generate(rollout_id=0, batch_size=1)
+        finally:
+            srv.shutdown()
+        self.assertEqual(out["kept_samples"], 2)
+        self.assertEqual(sorted(s.reward for s in out["samples"]), [0.0, 1.0])
+        self.assertEqual(len(state.started), 2)  # retried starts landed once
+
+    def test_start_permanent_failure_degrades_to_sandbox_error(self):
+        state = FakeNode2State()
+        state.reset_starts = 99  # node2 unreachable for every attempt
+        mgr, srv = self._mgr(state, drop_zero_var=False)
+        try:
+            out = mgr.generate(rollout_id=0, batch_size=1)
+        finally:
+            srv.shutdown()
+        # the failed starts degrade to SANDBOX_ERROR samples; the rollout
+        # itself must survive (T32: one RST used to kill all 44)
+        self.assertEqual(len(out["samples"]), 2)
+        self.assertTrue(all(s.status is SampleStatus.SANDBOX_ERROR
+                            for s in out["samples"]))
+        self.assertTrue(all("start failed" in s.sandbox["detail"]
+                            for s in out["samples"]))
+        self.assertEqual(state.started, [])
+
+    def test_poll_reset_is_tolerated(self):
+        state = FakeNode2State()
+        state.reset_polls = 3  # first three status polls die, then recover
+        mgr, srv = self._mgr(state)
+        try:
+            out = mgr.generate(rollout_id=0, batch_size=1)
+        finally:
+            srv.shutdown()
+        self.assertEqual(out["kept_samples"], 2)
+        self.assertEqual(sorted(s.reward for s in out["samples"]), [0.0, 1.0])
 
 
 if __name__ == "__main__":

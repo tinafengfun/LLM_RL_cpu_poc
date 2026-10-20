@@ -131,6 +131,25 @@ class TestTrajectoryEndpoint(unittest.TestCase):
         except Exception as e:
             self.assertIn("404", str(e))
 
+    def test_duplicate_start_is_idempotent(self):
+        # driver retries start after a connection reset; sandboxd must not
+        # spawn a second worker for the same traj_id (T32)
+        swe = {"instance_id": "fix__repo-1", "repo": "fix/repo",
+               "base_commit": self.commit, "problem_statement": "fix add",
+               "test_patch": "", "fail_to_pass": ["test_calc.py::test_add"],
+               "pass_to_pass": []}
+        body = {"traj_id": "traj-dupe", "swe": swe,
+                "adapter_url": f"http://127.0.0.1:{self.adapter_port}",
+                "git_dir": self.mirror, "venv": "",
+                "max_turns": 3, "agent_timeout_s": 60, "grade_timeout_s": 60}
+        r1 = _post(self.port, "/trajectory/start", body)
+        self.assertEqual(r1["state"], "running")
+        proc1 = self.registry.trajectories["traj-dupe"]["proc"]
+        r2 = _post(self.port, "/trajectory/start", body)
+        self.assertEqual(r2["state"], "running")
+        self.assertIs(self.registry.trajectories["traj-dupe"]["proc"], proc1)
+        _post(self.port, "/trajectory/abort", {"traj_id": "traj-dupe"})
+
 
 if __name__ == "__main__":
     unittest.main()

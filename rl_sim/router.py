@@ -18,6 +18,8 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from rl_sim import netutil
+
 
 class BackendRing:
     """Alive-backend registry + rendezvous hashing + failure stats."""
@@ -140,7 +142,7 @@ class _Handler(BaseHTTPRequestHandler):
 def serve(router: Router, host: str = "127.0.0.1", port: int = 0) -> tuple[ThreadingHTTPServer, threading.Thread]:
     """Start router HTTP front in a daemon thread; returns (server, thread)."""
     handler = type("BoundHandler", (_Handler,), {"router": router})
-    srv = ThreadingHTTPServer((host, port), handler)
+    srv = netutil.BurstThreadingHTTPServer((host, port), handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     return srv, t

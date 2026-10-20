@@ -40,8 +40,13 @@ class _H(BaseHTTPRequestHandler):
 
 
 class TestNetutil(unittest.TestCase):
-    def test_opener_never_proxies(self):
-        # Contract: no ProxyHandler with a non-empty proxy map. (CPython drops
+    def test_burst_server_backlog(self):
+        # cluster endpoints accept connection bursts (default backlog 5 RSTs)
+        self.assertGreaterEqual(
+            netutil.BurstThreadingHTTPServer.request_queue_size, 128)
+        self.assertTrue(netutil.BurstThreadingHTTPServer.daemon_threads)
+
+    def test_opener_never_proxies(self):        # Contract: no ProxyHandler with a non-empty proxy map. (CPython drops
         # ProxyHandler({}) from build_opener handlers entirely on some
         # versions, so "handler present" is NOT the contract — "no proxies" is.)
         from urllib.request import ProxyHandler

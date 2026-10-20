@@ -25,6 +25,8 @@ import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from rl_sim import netutil
+
 
 class TrajectoryLogger:
     """Append-only JSONL per trajectory; fsync-free (profiling, not WAL)."""
@@ -178,7 +180,8 @@ def main() -> None:
         name, _, url = b.partition("=")
         router.ring.add(name, url)
     adapter = Adapter(router, log_dir=args.log_dir, max_tokens=args.max_tokens)
-    srv = ThreadingHTTPServer((args.bind, args.port), make_handler(adapter))
+    srv = netutil.BurstThreadingHTTPServer((args.bind, args.port),
+                                           make_handler(adapter))
     print(f"[adapter] listening on {args.bind}:{args.port} "
           f"backends={len(args.backend)}", flush=True)
     srv.serve_forever()
