@@ -163,9 +163,7 @@ def make_handler(adapter: Adapter):
     return Handler
 
 
-def main() -> None:
-    from rl_sim.router import Router
-
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=18090)
     ap.add_argument("--bind", default="0.0.0.0")
@@ -173,9 +171,19 @@ def main() -> None:
     ap.add_argument("--backend", action="append", default=[],
                     help="name=url of a llama-server instance; repeatable")
     ap.add_argument("--max-tokens", type=int, default=4096)
-    args = ap.parse_args()
+    ap.add_argument("--backend-timeout-s", type=float, default=1800.0,
+                    help="per-call fuse to llama-server; must outlive queued "
+                         "generation under full slot load (T32: 600s was "
+                         "shorter than real queue+gen and mass-killed the ring)")
+    return ap
 
-    router = Router(timeout_s=600.0)
+
+def main() -> None:
+    from rl_sim.router import Router
+
+    args = build_parser().parse_args()
+
+    router = Router(timeout_s=args.backend_timeout_s)
     for b in args.backend:
         name, _, url = b.partition("=")
         router.ring.add(name, url)

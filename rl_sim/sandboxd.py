@@ -42,10 +42,12 @@ DEFAULT_SCRATCH = "/tmp/sandboxd_scratch"
 
 
 class SandboxEntry:
-    def __init__(self, sandbox_id: str, workdir: str, profile: str) -> None:
+    def __init__(self, sandbox_id: str, workdir: str, profile: str,
+                 ttl_s: float | None = None) -> None:
         self.sandbox_id = sandbox_id
         self.workdir = workdir
         self.profile = profile
+        self.ttl_s = ttl_s  # per-sandbox idle lease; None = registry default
         self.created_ts = time.time()
         self.last_used_ts = self.created_ts
         self.proc: subprocess.Popen | None = None
@@ -82,7 +84,8 @@ class SandboxRegistry:
     def _live_mem_mb(self) -> int:
         return sum(PROFILES[e.profile]["mem_mb"] for e in self.sandboxes.values())
 
-    def create(self, profile: str = "B", sandbox_id: str | None = None) -> SandboxEntry:
+    def create(self, profile: str = "B", sandbox_id: str | None = None,
+               ttl_s: float | None = None) -> SandboxEntry:
         if profile not in PROFILES:
             raise ValueError(f"unknown profile {profile!r}")
         with self.lock:
@@ -95,7 +98,7 @@ class SandboxRegistry:
             workdir = os.path.join(self.scratch_root, sid)
             os.makedirs(workdir, exist_ok=False)
             os.chmod(workdir, 0o777)  # nobody must enter under setpriv
-            entry = SandboxEntry(sid, workdir, profile)
+            entry = SandboxEntry(sid, workdir, profile, ttl_s=ttl_s)
             self.sandboxes[sid] = entry
             self.created_total += 1
             return entry
@@ -121,12 +124,13 @@ class SandboxRegistry:
         return True
 
     def reap_idle(self) -> list[str]:
-        """Stop sandboxes idle beyond ttl_s (no in-flight exec). Returns ids."""
+        """Stop sandboxes idle beyond their ttl_s (no in-flight exec)."""
         now = time.time()
         victims = []
         with self.lock:
             for sid, e in list(self.sandboxes.items()):
-                if e.proc is None and now - e.last_used_ts > self.ttl_s:
+                ttl = e.ttl_s if e.ttl_s is not None else self.ttl_s
+                if e.proc is None and now - e.last_used_ts > ttl:
                     victims.append(sid)
         return [sid for sid in victims if self.stop(sid)]
 
@@ -379,7 +383,8 @@ def make_handler(registry: SandboxRegistry):
             try:
                 if self.path == "/sandbox/create":
                     e = registry.create(req.get("profile", "B"),
-                                        req.get("sandbox_id"))
+                                        req.get("sandbox_id"),
+                                        ttl_s=req.get("ttl_s"))
                     return self._json(200, {"sandbox_id": e.sandbox_id,
                                             "workdir": e.workdir})
                 if self.path == "/sandbox/exec":

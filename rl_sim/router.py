@@ -22,10 +22,18 @@ from rl_sim import netutil
 
 
 class BackendRing:
-    """Alive-backend registry + rendezvous hashing + failure stats."""
+    """Alive-backend registry + rendezvous hashing + failure stats.
 
-    def __init__(self) -> None:
+    Failed backends are revived after `revive_after_s`: a timeout on an
+    overloaded-but-alive engine is a transient condition, not death (T32:
+    both engines timed out under a 44-deep queue and the ring never
+    recovered, killing every in-flight trajectory)."""
+
+    def __init__(self, revive_after_s: float = 60.0) -> None:
         self._alive: dict[str, str] = {}  # name -> base_url
+        self._all: dict[str, str] = {}    # master registry (survives failures)
+        self._failed: dict[str, float] = {}  # name -> failure ts
+        self.revive_after_s = revive_after_s
         self.counts: dict[str, int] = {}
         self.failures: dict[str, int] = {}
         self._lock = threading.Lock()
@@ -33,12 +41,15 @@ class BackendRing:
     def add(self, name: str, base_url: str) -> None:
         with self._lock:
             self._alive[name] = base_url
+            self._all[name] = base_url
             self.counts.setdefault(name, 0)
             self.failures.setdefault(name, 0)
 
     def remove(self, name: str) -> None:
         with self._lock:
             self._alive.pop(name, None)
+            self._all.pop(name, None)
+            self._failed.pop(name, None)
 
     def alive(self) -> dict[str, str]:
         with self._lock:
@@ -50,6 +61,13 @@ class BackendRing:
 
     def pick(self, session_key: str) -> tuple[str, str] | None:
         with self._lock:
+            now = time.time()
+            for name, ts in list(self._failed.items()):
+                if now - ts >= self.revive_after_s:
+                    url = self._all.get(name)
+                    if url is not None:
+                        self._alive[name] = url
+                    del self._failed[name]
             if not self._alive:
                 return None
             name = max(self._alive, key=lambda b: self._h(b, session_key))
@@ -60,6 +78,7 @@ class BackendRing:
         with self._lock:
             self.failures[name] = self.failures.get(name, 0) + 1
             self._alive.pop(name, None)
+            self._failed[name] = time.time()
 
 
 class Router:

@@ -139,5 +139,15 @@ class TestAdapterHTTP(unittest.TestCase):
         self.assertEqual(s["backends"], {"eng0": 1})
 
 
+class TestAdapterParser(unittest.TestCase):
+    def test_backend_timeout_default_outlives_queued_generation(self):
+        from rl_sim.adapter import build_parser
+        args = build_parser().parse_args([])
+        # T32: 600s < queue+gen under full slot load mass-killed the ring
+        self.assertGreaterEqual(args.backend_timeout_s, 1800.0)
+        args = build_parser().parse_args(["--backend-timeout-s", "900"])
+        self.assertEqual(args.backend_timeout_s, 900.0)
+
+
 if __name__ == "__main__":
     unittest.main()

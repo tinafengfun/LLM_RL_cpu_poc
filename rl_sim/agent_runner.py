@@ -139,7 +139,12 @@ class AgentRunner:
         patch = ""
         sandbox_id = None
         try:
-            sandbox_id = self.sandbox.create(self.profile)["sandbox_id"]
+            # sandbox lease must outlive agent think time: between two execs
+            # the loop waits on ONE generation, which under queueing can far
+            # exceed the registry default TTL (T32: mid-trajectory reaps
+            # caused "unknown sandbox" 404s)
+            sandbox_id = self.sandbox.create(
+                self.profile, ttl_s=self.agent_timeout_s + 600)["sandbox_id"]
             self._setup_repo(sandbox_id)
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},

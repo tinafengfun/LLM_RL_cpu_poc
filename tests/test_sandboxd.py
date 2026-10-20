@@ -122,6 +122,19 @@ class TestRegistryLogic(unittest.TestCase):
         self.assertEqual(reg.reap_idle(), [e.sandbox_id])
         self.assertEqual(reg.stats()["active_sandboxes"], 0)
 
+    def test_per_sandbox_ttl_overrides_registry_default(self):
+        # trajectory-held sandboxes carry a long lease (agent think time);
+        # the registry default must not reap them early (T32)
+        reg = SandboxRegistry("/tmp/sandboxd_test4", ttl_s=0.05)
+        leased = reg.create("A", ttl_s=3600)
+        plain = reg.create("A")
+        time.sleep(0.1)
+        self.assertEqual(reg.reap_idle(), [plain.sandbox_id])
+        self.assertEqual(reg.stats()["active_sandboxes"], 1)
+        reg.stop(leased.sandbox_id)
+        import shutil
+        shutil.rmtree("/tmp/sandboxd_test4", ignore_errors=True)
+
     def test_bad_profile_rejected(self):
         reg = SandboxRegistry("/tmp/sandboxd_test4")
         with self.assertRaises(ValueError):

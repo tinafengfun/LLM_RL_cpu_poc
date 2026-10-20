@@ -29,9 +29,11 @@ class SandboxHTTPClient:
         except urllib.error.HTTPError as e:
             raise SandboxdError(e.code, e.read().decode("utf-8", "replace")) from e
 
-    def create(self, profile: str = "B", sandbox_id: str | None = None) -> dict:
+    def create(self, profile: str = "B", sandbox_id: str | None = None,
+               ttl_s: float | None = None) -> dict:
         return self._post("/sandbox/create",
-                          {"profile": profile, "sandbox_id": sandbox_id})
+                          {"profile": profile, "sandbox_id": sandbox_id,
+                           "ttl_s": ttl_s})
 
     def exec(self, sandbox_id: str, cmd: str, timeout_s: float | None = None,
              env: dict | None = None) -> dict:

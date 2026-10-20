@@ -33,8 +33,10 @@ class FakeSandbox:
     def __init__(self):
         self.execs = []
         self.stopped = False
+        self.create_kwargs = {}
 
-    def create(self, profile="B"):
+    def create(self, profile="B", **kw):
+        self.create_kwargs = kw
         return {"sandbox_id": "sb-fake", "workdir": "/tmp/sb-fake"}
 
     def exec(self, sandbox_id, cmd, timeout_s=None, env=None):
@@ -190,6 +192,17 @@ class TestAgentRunner(unittest.TestCase):
             self.assertIn("elided", m["content"])
         for m in final_tools[-2:]:  # the last 2 stay full-size
             self.assertGreater(len(m["content"]), 4000)
+
+    def test_sandbox_lease_covers_agent_think_time(self):
+        # one queued generation can idle the sandbox far beyond the
+        # registry default TTL (T32 mid-trajectory reaps) — the create
+        # call must carry a lease tied to agent_timeout
+        sandbox = FakeSandbox()
+        r = AgentRunner(SWE, FakeAdapter([{"text": "x", "tool_calls": [
+            _tc("submit", {})]}]), sandbox, git_dir="/x/y.git",
+            run_dir=self.run_dir, agent_timeout_s=1800)
+        r.run()
+        self.assertEqual(sandbox.create_kwargs.get("ttl_s"), 1800 + 600)
 
     def test_prune_idempotent(self):
         r = AgentRunner(SWE, FakeAdapter([]), FakeSandbox(), git_dir="/x/y.git",

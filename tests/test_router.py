@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 import unittest
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -56,8 +57,18 @@ class TestBackendRing(unittest.TestCase):
         self.assertNotEqual(ring.pick("k")[0], victim)
         self.assertEqual(ring.failures[victim], 1)
 
-    def test_no_backends(self):
-        self.assertIsNone(BackendRing().pick("x"))
+    def test_failed_backend_revives_after_cooldown(self):
+        # timeout on an overloaded-but-alive engine is transient (T32):
+        # the ring must self-heal instead of staying empty forever
+        ring = BackendRing(revive_after_s=0.05)
+        ring.add("b1", "http://x")
+        ring.mark_failure("b1")
+        self.assertIsNone(ring.pick("s"))
+        time.sleep(0.06)
+        self.assertEqual(ring.pick("s")[0], "b1")
+        self.assertEqual(ring.failures["b1"], 1)  # failure stat preserved
+
+    def test_no_backends(self):        self.assertIsNone(BackendRing().pick("x"))
 
 
 class TestRouterHTTP(unittest.TestCase):
